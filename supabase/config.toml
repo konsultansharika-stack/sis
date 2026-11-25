@@ -1,0 +1,9 @@
+# Konfigurasi functions SIS — copy ke root project Supabase CLI Anda
+# (folder yang memuat ./supabase/functions/nasa-proxy/index.ts)
+project_id = "sis"
+
+[functions.nasa-proxy]
+verify_jwt = false   # klien file:// tidak mengirim header Supabase; dilindungi allowlist host
+
+[functions.refresh-cache]
+verify_jwt = false   # hanya menulis data publik ke api_cache
