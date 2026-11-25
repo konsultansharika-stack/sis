@@ -11,7 +11,7 @@ Advanced Cosmic Monitoring, Exploration & Intelligence Platform — aplikasi sat
 2. Buka dengan browser modern (Chrome, Edge, Firefox, Safari).
 3. Selesai — tidak ada instalasi, server, atau build. Semua fitur berjalan pada **mode demo lokal** meski tanpa internet.
 
-> Saat daring, SIS otomatis mencoba sumber data publik resmi (NOAA SWPC, NASA NeoWs, Launch Library 2, NASA EONET, WhereTheISS.at, CelesTrak, **JPL Horizons**, **NASA Exoplanet Archive TAP**) dan memberi label **LIVE / CACHED / SIMULATED / MODEL REAL** pada tiap panel. Posisi ISS/Tiangong dihitung dengan **propagasi SGP4 nyata** (library `satellite.js`) dari TLE resmi CelesTrak; bila CelesTrak tidak terjangkau, posisi ISS tetap **nyata** dari API WhereTheISS.at; tanpa keduanya, model orbit demo (**SIMULATED**). **Baru di v2.2:** planet di Solar System Explorer memakai **ephemeris nyata** (Horizons LIVE, atau propagasi Kepler dari elemen orbit JPL — tervalidasi, ±1′), panel **probe antarpelanet** (Voyager, Parker, dll.) dengan delay sinyal one-way, dan **feed eksoplanet terbaru** dari NASA EA TAP. Detail + verifikasi koneksi: **PANDUAN.md**.
+> Saat daring, SIS otomatis mencoba sumber data publik resmi (NOAA SWPC — Kp, **DSCOVR solar wind, GOES X-ray**, **USGS gempa**, NASA NeoWs, Launch Library 2, NASA EONET, WhereTheISS.at, CelesTrak, **JPL Horizons**, **NASA Exoplanet Archive TAP**) dan memberi label **LIVE / CACHED / SIMULATED / MODEL REAL** pada tiap panel — setiap angka KPI sekarang mencantumkan sumbernya (mis. "LIVE DSCOVR"). Posisi ISS/Tiangong dihitung dengan **propagasi SGP4 nyata** (library `satellite.js`) dari TLE resmi CelesTrak; bila CelesTrak tidak terjangkau, posisi ISS tetap **nyata** dari API WhereTheISS.at; tanpa keduanya, model orbit demo (**SIMULATED**). **Baru di v2.2:** planet di Solar System Explorer memakai **ephemeris nyata** (Horizons LIVE, atau propagasi Kepler dari elemen orbit JPL — tervalidasi, ±1′), panel **probe antarpelanet** (Voyager, Parker, dll.) dengan delay sinyal one-way, **feed eksoplanet terbaru** dari NASA EA TAP, **cuaca antariksa DSCOVR/GOES nyata** (Kp, angin, Bt/Bz, F10.7, flare; DONKI FLR/CME dengan kunci NASA), dan **event geofisika aktif otomatis** (USGS gempa M4.5+ + EONET). Detail + verifikasi koneksi: **PANDUAN.md**.
 
 ## 2. Fitur Utama
 
@@ -73,12 +73,15 @@ create policy "sis anon demo access" on sis_records
 | NASA EONET | `eonet.gsfc.nasa.gov/api/v3/events` | tanpa key |
 | Launch Library 2 | `ll.thespacedevs.com/2.2.0/launch/upcoming/` | rate-limit publik |
 | CelesTrak GP (TLE) | `celestrak.org/NORAD/elements/gp.php?GROUP=stations` | tanpa key; fetch dibatasi 1x/2 jam → SGP4 |
+| NOAA SWPC DSCOVR/GOES | `services.swpc.noaa.gov/products/summary/*`, `/json/goes/primary/xrays-1-day.json` | tanpa key; angin matahari, Bt/Bz, F10.7, kelas flare 24 jam |
+| USGS Earthquakes | `earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson` | tanpa key; CORS terbuka; gempa M4.5+ 7 hari (±95 event) |
+| NASA DONKI FLR/CME | `api.nasa.gov/DONKI/...` | `api_key` pribadi; daftar flare/CME 7 hari (fallback: GOES XRS) |
 | **JPL Horizons** | `ssd-api.jpl.nasa.gov/horizons.api` (VECTORS, ECLIPTIC) | tanpa key; vektor planet & probe (NAIF −31…−151); bila diblokir jaringan → proxy Edge / fallback Kepler |
 | **NASA Exoplanet Archive (TAP)** | `exoplanetarchive.ipac.caltech.edu/TAP/sync` (tabel `ps`) | tanpa key; **tanpa CORS** → wajib proxy Edge; fallback katalog kurasi HISTORICAL |
 | NASA DONKI / APOD | `api.nasa.gov/DONKI/...`, `api.nasa.gov/planetary/apod` | `api_key` (masukkan sendiri di Settings) |
 | JPL SBDB, SIMBAD, ESA Open Data | katalog (mode demo memakai salinan lokal berlabel HISTORICAL) | — |
 
-Kegagalan jaringan/CORS/rate-limit ditangani dengan fallback berlapis: **vektor Horizons → propagasi Kepler (MODEL REAL) → demo (SIMULATED)** untuk planet; **TAP via proxy → katalog kurasi (HISTORICAL)** untuk eksoplanet — tidak pernah ada data yang diklaim real-time padahal simulasi. Akurasi Kepler tervalidasi: Bumi 25-11-2026 → lon 62,85° (truth ≈63°), r 0,9871 AU, progresi 30 hari 30,47° (script `scripts/verify_kepler.py`).
+Kegagalan jaringan/CORS/rate-limit ditangani dengan fallback berlapis: **vektor Horizons → propagasi Kepler (MODEL REAL) → demo (SIMULATED)** untuk planet; **TAP via proxy → katalog kurasi (HISTORICAL)** untuk eksoplanet; **USGS → EONET → demo (SIMULASI)** untuk event geofisika; **DSCOVR/GOES → generator simulasi berlabel** untuk cuaca antariksa — tidak pernah ada data yang diklaim real-time padahal simulasi. Akurasi Kepler tervalidasi: Bumi 25-11-2026 → lon 62,85° (truth ≈63°), r 0,9871 AU, progresi 30 hari 30,47° (script `scripts/verify_kepler.py`).
 
 ### Memastikan NASA API Key terkoneksi & aktif
 

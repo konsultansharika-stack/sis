@@ -33,13 +33,16 @@ tidak ada kunci rahasia di dalam file.
 | Deep Space — Probe | Tidak ada | Panel posisi 6 probe (Voyager 1/2, New Horizons, Parker, Juno, Lucy) + **delay sinyal one-way** (c=499,005 s/AU). Fallback model berlabel SIMULATED | Horizons NAIF −31,−32,−49,−96,−61,−151 |
 | Exoplanet Discovery | Katalog kurasi statis | **Feed 120 eksoplanet terbaru** dari NASA Exoplanet Archive (TAP `ps`, `default_flag=1`) di depan katalog; badge LIVE/HISTORICAL | exoplanetarchive.ipac.caltech.edu |
 | Satellite / Traffic / Weather / Command | Sudah realtime (SGP4, SWPC, ISS) | Tetap + sumber baru terlihat di panel sumber | SWPC, CelesTrak, WhereTheISS.at, LL2, NeoWs |
+| **Space Weather (v2.2b)** | Generator simulasi penuh (badge LIVE tapi isi demo!) | **Kp** (NOAA, riwayat 48 jam), **angin matahari + Bt/Bz** (DSCOVR realtime), **F10.7**, **kelas flare dari GOES X-ray**, **DONKI FLR/CME** bila kunci NASA diisi; densitas tetap simulasi (tak ada endpoint publik) | services.swpc.noaa.gov, api.nasa.gov/DONKI |
+| **Earth — Event Geofisika (v2.2b)** | Hanya tombol manual EONET (dan EONET v3 sering 500) | **Otomatis saat halaman dibuka**: gempa M4.5+ 7 hari dari **USGS** (±95 event, CORS terbuka) + EONET bila hidup; marker nyata di globe 3D & peta 2D + link sumber | earthquake.usgs.gov, eonet.gsfc.nasa.gov |
 
 Catatan akurasi Kepler: matematika tervalidasi — Bumi 25-11-2026: lon 62,85° (truth geometris
 ≈63°), r 0,9871 AU, progresi 30 hari 30,47°; kode JS dan verifikasi Python menghasilkan angka identik.
 
 ## 4. Rute transport API (kenapa ada proxy)
 
-- **api.nasa.gov, SWPC, WhereTheISS, LL2, CelesTrak, EONET** → CORS terbuka → langsung dari browser.
+- **api.nasa.gov, SWPC (Kp/DSCOVR/GOES), WhereTheISS, LL2, CelesTrak, USGS** → CORS terbuka → langsung dari browser.
+- **EONET v3** → CORS terbuka, tetapi layanannya sendiri sering 500 → aplikasi otomatis memakai USGS sebagai sumber event nyata; EONET dipakai begitu pulih.
 - **Exoplanet Archive (IPAC)** → **tanpa header CORS** → langsung dari `file://` pasti diblokir
   → butuh **Edge Function `nasa-proxy`** (§5) atau server kecil milik Anda.
 - **JPL Horizons** → CORS terbuka menurut dokumentasi, tetapi beberapa jaringan memblokir hostnya
@@ -72,7 +75,9 @@ Prasyarat: Node 20+, CLI `supabase` (`npm i -g supabase`), login `supabase login
 
 ## 6. Checklist verifikasi koneksi (2 menit)
 
-- [ ] Command Center → STATUS SUMBER DATA: minimal SWPC **LIVE** (tanpa key).
+- [ ] Command Center → STATUS SUMBER DATA: minimal SWPC + WhereTheISS + LL2 **LIVE** (tanpa key).
+- [ ] Space Weather → badge **LIVE — NOAA SWPC DSCOVR/GOES**; angin ≈ 250–800 km/s (bukan angka acak).
+- [ ] Earth Observation → badge **USGS: LIVE (±95 gempa)**; daftar "Event Geofisika Aktif" berisi gempa M4.5+ nyata.
 - [ ] Settings → Test kunci NASA → **VALID & AKTIF** (dengan kunci pribadi).
 - [ ] Solar System → badge **MODEL REAL / LIVE** + planet di posisi hari ini.
 - [ ] Deep Space → tabel probe: LIVE (Horizons) atau fallback berlabel SIMULATED.
@@ -90,6 +95,8 @@ Prasyarat: Node 20+, CLI `supabase` (`npm i -g supabase`), login `supabase login
 | NeoWs 403 | Kunci salah | Test kunci di Settings; daftar ulang |
 | Exo tetap HISTORICAL | TAP diblokir CORS | Deploy nasa-proxy + nyalakan switch Proxy (§5) |
 | Probe tetap SIMULATED | Horizons diblokir jaringan | Sama — lewat nasa-proxy |
+| Earth list tetap SIMULASI | EONET 500 **dan** USGS diblokir | Periksa akses earthquake.usgs.gov; proxy juga mendukungnya |
+| Weather badge SIMULATED | services.swpc.noaa.gov tidak terjangkau | Koneksi internet; tanpa proxy pun SWPC biasanya jalan |
 | Chart kosong | CDN Chart.js offline | Koneksi internet; data tetap ada di tabel |
 
 ## 8. Batasan yang jujur di-deklarasikan UI

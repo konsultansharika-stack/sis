@@ -1196,6 +1196,167 @@ async function fetchExoLive(force){
   }
   return EXOLIVE.length;
 }
+
+/* ---------- Cuaca antariksa NYATA: NOAA SWPC (DSCOVR + GOES XRS + Kp) ----------
+   Endpoint terverifikasi 200: summary solar-wind-speed / mag-field / 10cm-flux,
+   json f107_cm_flux & goes/primary/xrays-1-day. Densitas tidak punya endpoint
+   realtime publik → tetap simulasi berlabel jujur. DONKI FLR/CME dipakai bila
+   user mengisi NASA API key pribadi (bukan DEMO_KEY). */
+function flareClass(f){
+  if(!isFinite(f)) return null;
+  if(f>=1e-4) return 'X'+(f/1e-4).toFixed(1);
+  if(f>=1e-5) return 'M'+(f/1e-5).toFixed(1);
+  if(f>=1e-6) return 'C'+(f/1e-6).toFixed(1);
+  return 'B'+Math.round(f/1e-7*10)/10;
+}
+async function fetchSpaceWeather(force){
+  if(!force&&STATE.swLive&&STATE.swLive.w&&STATE.swLive.w._live&&Date.now()-STATE.swLive.ts<15*60000) return 1;
+  const F=async(u,ck,t)=>{
+    let r=await fetchJSON(u,{cacheKey:ck,timeout:t||10000});
+    if(!r.ok){ const pu=supaProxyURL(u); if(pu) r=await fetchJSON(pu,{cacheKey:ck+'p',timeout:12000}); }
+    return r;
+  };
+  const last=o=>Array.isArray(o)&&o.length?o[o.length-1]:null;
+  // 1) Kp — pakai hasil loader SWPC bila sudah ada, else fetch sendiri
+  let kpRows=STATE.kpLive||null,kpLive=false;
+  if(!kpRows){ const r=await F('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json','swpc_kp');
+    if(r.ok&&Array.isArray(r.data)){ STATE.kpLive=r.data; kpRows=r.data; kpLive=r.live; } }
+  /* noaa-planetary-k-index.json bisa array-of-arrays ATAU array-of-objects
+     (format terkini: {"time_tag","Kp","a_running","station_count"}) — normalisasi */
+  let kpN=null;
+  try{
+    if(Array.isArray(kpRows)&&kpRows.length&&typeof kpRows[0]==='object'&&!Array.isArray(kpRows[0]))
+      kpN=kpRows.filter(x=>x&&isFinite(parseFloat(x.Kp))).map(x=>({t:x.time_tag,v:parseFloat(x.Kp)}));
+    else if(Array.isArray(kpRows))
+      kpN=kpRows.filter(x=>x&&Array.isArray(x)&&isFinite(parseFloat(x[1]))).map(x=>({t:x[0],v:parseFloat(x[1])}));
+  }catch(e){}
+  const kp=(kpN&&kpN.length)?kpN[kpN.length-1].v:null;
+  // 2) DSCOVR realtime (ringkasan terkini)
+  const [rW,rM,rF]=await Promise.all([
+    F('https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json','sw_wind'),
+    F('https://services.swpc.noaa.gov/products/summary/solar-wind-mag-field.json','sw_mag'),
+    F('https://services.swpc.noaa.gov/products/summary/10cm-flux.json','sw_f107')]);
+  const jw=last(rW.ok?rW.data:null), jm=last(rM.ok?rM.data:null), jf=last(rF.ok?rF.data:null);
+  const windV=jw&&isFinite(parseFloat(jw.proton_speed))?parseFloat(jw.proton_speed):null;
+  const btV=jm&&isFinite(parseFloat(jm.bt))?parseFloat(jm.bt):null;
+  const bzV=jm&&isFinite(parseFloat(jm.bz_gsm))?parseFloat(jm.bz_gsm):null;
+  const f107V=jf&&isFinite(parseFloat(jf.flux))?parseFloat(jf.flux):null;
+  // 3) GOES X-ray 24 jam → kelas flare maksimum (nyata)
+  const rX=await F('https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json','sw_xray',12000);
+  let flareCls=null;
+  if(rX.ok&&Array.isArray(rX.data)){
+    const fl=rX.data.filter(x=>x&&x.energy==='0.1-0.8nm'&&typeof x.observed_flux==='number').map(x=>x.observed_flux);
+    if(fl.length) flareCls=flareClass(Math.max(...fl));
+  }
+  // 4) DONKI FLR/CME 7 hari — hanya bila kunci NASA pribadi terisi
+  const nk=SET.nasaKey&&SET.nasaKey!=='DEMO_KEY'?SET.nasaKey:null;
+  let flares=[],cmes=[],donki=false;
+  if(nk){
+    const d0=new Date(Date.now()-7*864e5).toISOString().slice(0,10), d1=new Date().toISOString().slice(0,10);
+    const [rFL,rC]=await Promise.all([
+      F('https://api.nasa.gov/DONKI/FLR?startDate='+d0+'&endDate='+d1+'&api_key='+nk,'donki_flr',12000),
+      F('https://api.nasa.gov/DONKI/CME?startDate='+d0+'&endDate='+d1+'&api_key='+nk,'donki_cme',12000)]);
+    if(rFL.ok&&Array.isArray(rFL.data)&&rFL.data.length){
+      flares=rFL.data.slice(0,5).map(f=>({cls:f.classType||'—',peak:f.peakTime?Date.parse(f.peakTime):Date.now(),
+        region:f.activeRegionNum?('AR'+f.activeRegionNum):'—',loc:f.sourceLocation||'—',
+        note:'DONKI NASA — flare tercatat resmi',live:true})); donki=true;
+    }
+    if(rC.ok&&Array.isArray(rC.data)&&rC.data.length){
+      cmes=rC.data.slice(0,3).map(c=>{ const a=c.cmeAnalyses&&c.cmeAnalyses[0];
+        return {t:c.startTime?Date.parse(c.startTime):Date.now(),v:(a&&a.speed)?a.speed:'—',
+          width:(a&&a.type)?a.type:'—',dir:'DONKI NASA',note:'CME tercatat NASA DONKI',live:true}; }); donki=true;
+    }
+  }
+  if(!flares.length&&flareCls) flares=[{cls:flareCls,peak:Date.now(),region:'GOES XRS (SWPC)',loc:'—',
+    note:'Kelas maksimum 24 jam dari flux X-ray GOES nyata — bukan simulasi',live:true}];
+  const w=weatherNowSim(); // basis: series ilustratif & nilai fallback deterministik
+  const srcs={kp:'simulasi',wind:'simulasi',dens:'simulasi (tanpa endpoint publik)',bt:'simulasi',ss:'est. F10.7',f107:'simulasi',flare:'SIMULASI',cme:'SIMULASI'};
+  if(kp!=null){ w.kp=Math.round(kp*10)/10; srcs.kp='LIVE NOAA'; }
+  if(windV!=null){ w.wind=Math.round(windV); srcs.wind='LIVE DSCOVR'; }
+  if(btV!=null){ w.bt=Math.round(btV*10)/10; srcs.bt='LIVE DSCOVR'; }
+  if(f107V!=null){ w.f107=Math.round(f107V); srcs.f107='LIVE NOAA'; srcs.ss='est. dari F10.7 '+w.f107; }
+  // densitas: tanpa endpoint realtime publik → model deterministik berlabel simulasi
+  w.dens=Math.round((3+Math.abs(Math.sin(Date.now()/36e5*7.1))*5)*10)/10;
+  w.ss=Math.max(0,Math.round((w.f107-70)/0.79)); // proxy SSN ≈ (F10.7−70)/0.79 — estimasi
+  w.bz=bzV!=null?Math.round(bzV*10)/10:(w.bt?-w.bt*.3:w.bz);
+  if(bzV!=null) srcs.bt='LIVE DSCOVR';
+  if(flares.length){ w.flares=flares; srcs.flare=donki?'LIVE DONKI':'LIVE GOES XRS'; }
+  if(cmes.length){ w.cmes=cmes; srcs.cme=donki?'LIVE DONKI':'—'; }
+  w.rad=flareCls?(flareCls[0]==='X'?'S2 — Moderate (est.)':flareCls[0]==='M'?'S1 — Minor (est.)':'S0 — Tidak ada'):'S1 — Minor';
+  w.rbn=flareCls?(flareCls[0]==='X'?'R3 — Strong':flareCls[0]==='M'?'R2 — Moderate':'R0 — Tidak ada'):'R1 — Minor (aktif)';
+  w.auroraLat=52+Math.round(w.kp*3.2);
+  // series 48 jam: Kp nyata per 3 jam (NOAA); wind/dens di chart bersifat ilustratif
+  if(kpN&&kpN.length>2){
+    w.series=kpN.slice(-16).map((r,i)=>({h:i,kp:Math.round(r.v*10)/10,
+      wind:Math.round(340+Math.sin(i*.35)*120),dens:Math.round((3+Math.abs(Math.sin(i*.5))*5)*10)/10}));
+    srcs.series='Kp nyata NOAA (3 jam per titik)';
+  }
+  w._srcs=srcs; w._live=srcs.kp==='LIVE NOAA'||srcs.wind==='LIVE DSCOVR'||srcs.flare.indexOf('LIVE')===0;
+  STATE.swLive={w,ts:Date.now()};
+  markSource('dscovr','NOAA SWPC — DSCOVR & GOES (angin, Bt/Bz, F10.7, flare)',
+    w._live?((kpLive||rW.live||rX.live)?'LIVE':'CACHED'):'SIMULATED',
+    'https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json');
+  if(w._live) logAct('swpc','Cuaca antariksa nyata: angin '+w.wind+' km/s · Bt '+w.bt+' nT · Bz '+w.bz+' nT · F10.7 '+w.f107+' sfu · flare maks '+w.flares[0].cls);
+  return w._live?1:0;
+}
+
+/* ---------- Event geofisika Bumi: NASA EONET + USGS gempa (nyata) ----------
+   EONET v3 sering 500 server-side → gempa M4.5+ 7 hari dari USGS GeoJSON
+   (terverifikasi 200 + CORS terbuka, ±95 event/minggu) sebagai sumber LIVE utama. */
+async function refreshEONET(){
+  const r=await fetchJSON('https://eonet.gsfc.nasa.gov/api/v3/events?limit=12',{cacheKey:'eonet',timeout:12000});
+  if(r.ok&&r.data&&Array.isArray(r.data.events)){
+    STATE.eonetEvs=r.data.events.map(eonetMarker).filter(Boolean);
+    STATE.eonetSt=r.live?'LIVE':'CACHED';
+  } else { STATE.eonetEvs=[]; STATE.eonetSt='UNAVAILABLE'; }
+  updateEarthBadge();
+  return STATE.eonetSt!=='UNAVAILABLE';
+}
+async function refreshUSGS(){
+  const r=await fetchJSON('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson',{cacheKey:'usgs45',timeout:12000});
+  STATE.usgsEvs=(r.ok&&Array.isArray(r.data.features))?r.data.features.map(usgsMarker).filter(Boolean):[];
+  STATE.usgsSt=STATE.usgsEvs.length?(r.live?'LIVE':'CACHED'):'UNAVAILABLE';
+  updateEarthBadge();
+  return STATE.usgsSt!=='UNAVAILABLE';
+}
+async function fetchEarthEvents(){ return Promise.all([refreshEONET(),refreshUSGS()]); }
+function eonetCat(c){
+  c=String(c||'');
+  if(/wildfire/i.test(c)) return ['kebakaran','#ffb020','flame'];
+  if(/volcan/i.test(c)) return ['vulkan','#ff6b35','mountain'];
+  if(/ice/i.test(c)) return ['kutub','#7dd3fc','snowflake'];
+  if(/storm/i.test(c)) return ['badai','#a78bfa','wind'];
+  if(/flood/i.test(c)) return ['laut','#00d4ff','waves'];
+  if(/drought|dust|smoke|landslide/i.test(c)) return ['vegetasi','#00e676','leaf'];
+  return ['lainnya','#7dd3fc','orbit'];
+}
+function eonetMarker(e){
+  const g=e.geometry||[],last=g[g.length-1],co=last&&last.coordinates;
+  let lon=null,lat=null;
+  if(Array.isArray(co)&&typeof co[0]==='number'){ lon=co[0]; lat=co[1]; }
+  else if(Array.isArray(co)&&Array.isArray(co[0])){ lon=co[0][0][0]; lat=co[0][0][1]; }
+  if(lon==null||lat==null||!isFinite(lat)||!isFinite(lon)) return null;
+  const cat=(e.categories&&e.categories[0]&&e.categories[0].title)||'—', ct=eonetCat(cat);
+  return {n:String(e.title||'Event'),type:ct[0],lat,lon,color:ct[1],icon:ct[2],
+    note:'Event aktif NASA EONET — kategori: '+cat+'.',link:e.link,real:true};
+}
+function usgsMarker(f){
+  const p=f.properties,c=f.geometry&&f.geometry.coordinates;
+  if(!p||!c||p.mag==null||!isFinite(c[1])) return null;
+  return {n:'M'+(+p.mag).toFixed(1)+' — '+String(p.place||'lokasi tidak diketahui'),type:'gempa',lat:c[1],lon:c[0],
+    color:p.mag>=6?'#ff3b5c':p.mag>=5?'#f97316':'#ffb020',icon:'activity',
+    note:'Gempa M'+(+p.mag).toFixed(1)+', kedalaman '+Math.round(c[2])+' km — USGS real-time.',link:p.url,real:true};
+}
+function liveEarthMarkers(){ return [].concat(STATE.eonetEvs||[],STATE.usgsEvs||[]); }
+function updateEarthBadge(){
+  const b=document.getElementById('eoLiveBadge'); if(!b) return;
+  const parts=[];
+  parts.push('EONET: '+(STATE.eonetEvs&&STATE.eonetEvs.length?(STATE.eonetSt+' ('+STATE.eonetEvs.length+' event)'):STATE.eonetSt||'—'));
+  parts.push('USGS: '+(STATE.usgsEvs&&STATE.usgsEvs.length?(STATE.usgsSt+' ('+STATE.usgsEvs.length+' gempa)'):STATE.usgsSt||'—'));
+  const ok=(STATE.eonetEvs&&STATE.eonetEvs.length)||(STATE.usgsEvs&&STATE.usgsEvs.length);
+  b.className='badge '+(ok?'b-live':'b-sim');
+  b.textContent=parts.join(' · ');
+}
 /* ================================================================
    DEMO DATA — bagian A: peta benua (representasi visual) & tata surya
    ================================================================ */
@@ -1337,8 +1498,10 @@ const NEOS=[
    DEMO DATA — bagian C: cuaca antariksa, eksoplanet, objek deep space
    ================================================================ */
 
-/* Generator keadaan cuaca antariksa demo (deterministik per jam) */
-function weatherNow(){
+/* Generator keadaan cuaca antariksa demo (deterministik per jam).
+   weatherNow() memilih data LIVE (STATE.swLive — NOAA SWPC DSCOVR/GOES, lihat 04b)
+   dan hanya jatuh ke generator ini bila fetch gagal (label SIMULATED). */
+function weatherNowSim(){
   const hr=Math.floor(Date.now()/36e5);
   const s=(n)=>{ const x=Math.sin(hr*n)*.5+.5; return x; };
   const kp=Math.round((s(1.7)*4+ s(4.3)*3)*10)/10; // 0..7 range realism
@@ -1361,6 +1524,11 @@ function weatherNow(){
   };
 }
 function kpStatus(kp){ return kp<2?['Normal','ok']:kp<4?['Minor','ok']:kp<5?['Moderate','warn']:kp<6?['Strong','warn']:kp<8?['Severe','bad']:['Extreme','bad']; }
+/* weatherNow: data nyata NOAA SWPC bila tersedia, else generator simulasi */
+function weatherNow(){
+  const lv=(typeof STATE!=='undefined')&&STATE.swLive&&STATE.swLive.w;
+  return lv?STATE.swLive.w:weatherNowSim();
+}
 
 /* Eksoplanet — berbasis NASA Exoplanet Archive (aproksimasi publik, mode demo) */
 const EXOS=[
@@ -2240,6 +2408,9 @@ async function loadLiveData(force){
   markSource('horizons','JPL Horizons — vektor heliosentris','SIMULATED','https://ssd-api.jpl.nasa.gov/horizons.api');
   markSource('probes','Probe antarpelanet (Horizons)','SIMULATED','https://ssd-api.jpl.nasa.gov/horizons.api');
   markSource('exoplanets','NASA Exoplanet Archive (TAP)','SIMULATED','https://exoplanetarchive.ipac.caltech.edu/TAP/sync');
+  markSource('dscovr','NOAA SWPC — DSCOVR & GOES','SIMULATED','https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json');
+  markSource('eonet','NASA EONET — event geofisika','SIMULATED','https://eonet.gsfc.nasa.gov/api/v3/events');
+  markSource('usgs','USGS — gempa M4.5+ global','SIMULATED','https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson');
   // jalankan fetch paralel; masing-masing menandai status sendiri
   fetchJSON('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json',{cacheKey:'swpc_kp'})
     .then(r=>{ markSource('swpc','NOAA SWPC — Kp Index',r.ok?(r.live?'LIVE':'CACHED'):'SIMULATED','https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json'); STATE.kpLive=r.ok?r.data:null; });
@@ -2250,7 +2421,7 @@ async function loadLiveData(force){
   fetchJSON('https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json',{cacheKey:'celes_stations'})
     .then(r=>{ markSource('celesTrak','CelesTrak GP (TLE)',r.ok?(r.live?'LIVE':'CACHED'):'SIMULATED','https://celestrak.org/NORAD/elements/gp.php'); if(r.ok){ STATE.celestrak=r.data; if(applyTLE(r.data)) logAct('sgp4','TLE CelesTrak termuat — propagasi SGP4 aktif'); } });
   fetchISSNow();
-  fetchHorizons(); fetchProbes(); fetchExoLive(); // engine realtime (04b) — masing-masing menandai status sendiri
+  fetchHorizons(); fetchProbes(); fetchExoLive(); fetchSpaceWeather(); fetchEarthEvents(); // engine realtime (04b)
 }
 /* ================================================================
    MODUL 2 — SOLAR SYSTEM EXPLORER  |  MODUL 3 — EARTH OBSERVATION
@@ -2407,7 +2578,7 @@ REG({
     <div class="grid g-21 mb">
       <div class="panel">
         <div class="panel-h"><h3><i data-lucide="globe-2"></i> Bumi 3D — Terminator Real-time</h3><div class="spacer"></div>
-          <span class="badge b-sim">VISUAL SIMULASI</span><span class="badge b-sim" id="eoLiveBadge">EONET: memuat…</span></div>
+          <span class="badge b-sim">VISUAL SIMULASI</span><span class="badge b-sim" id="eoLiveBadge">EONET & USGS: memuat…</span></div>
         <div class="scene-wrap" id="eoGlobe" style="height:480px"></div>
         <div class="tag3d">Tekstur bumi = representasi prosedur; terminator dihitung dari posisi matahari UTC nyata.</div>
       </div>
@@ -2435,8 +2606,8 @@ REG({
         <div class="panel-b"><div class="chartbox"><canvas id="eoTrend"></canvas></div>
         <div class="note blue">Grafik ilustratif: deviasi suhu permukaan global & anomalesi es laut — gunakan NASA Vital Signs untuk data resmi.</div></div></div>
     </div>
-    <div class="disclaimer"><i data-lucide="satellite-dish"></i><span>Modul ini mencoba NASA EONET (event geofisika publik) saat daring; bila gagal, daftar event demo dipakai dan diberi label SIMULASI. Citra satelit resolusi tinggi tidak disertakan agar file tetap offline-friendly.</span></div>`;
-    mountScene($('#eoGlobe'),c=>buildGlobe(c,{satellites:SATS.filter(s=>['Earth Observation Satellites','Weather Satellites'].includes(s.cat)&&s.status==='Operational'),markers:EARTH_MARKERS,
+    <div class="disclaimer"><i data-lucide="satellite-dish"></i><span>Event geofisika aktif dimuat otomatis: <b>USGS gempa M4.5+ (7 hari, real-time, CORS terbuka)</b> + <b>NASA EONET</b> (layanan v3 saat ini sering 500). Bila keduanya gagal → daftar demo berlabel SIMULASI. Citra satelit resolusi tinggi tidak disertakan agar file tetap offline-friendly.</span></div>`;
+    mountScene($('#eoGlobe'),c=>buildGlobe(c,{satellites:SATS.filter(s=>['Earth Observation Satellites','Weather Satellites'].includes(s.cat)&&s.status==='Operational'),markers:EARTH_MARKERS.concat(liveEarthMarkers()),
       onMarker:m=>openModal({title:m.n,icon:'map-pin',body:`<p style="line-height:1.7">${esc(m.note)}</p><div class="tiles mt"><div class="tile"><small>Tipe</small><b>${esc(m.type)}</b></div><div class="tile"><small>Koordinat</small><b>${m.lat.toFixed(2)}°, ${m.lon.toFixed(2)}°</b></div></div><div class="note">Penanda berbasis lokasi nyata; status aktivitasnya demo (SIMULASI) kecuali diambil dari EONET live.</div>`}),
       onEarth:(lat,lon)=>toast('Lokasi dipilih',`Lat ${lat.toFixed(1)}° Lon ${lon.toFixed(1)}° — layer aktif: ${$('#eoLayer').value}`,'info')
     }));
@@ -2446,7 +2617,7 @@ REG({
       const W=cv.clientWidth*1.5,H=300*1.5; cv.width=W; cv.height=H;
       const ctx=cv.getContext('2d');
       drawWorldMap(ctx,W,H,{});
-      EARTH_MARKERS.forEach(m=>{
+      EARTH_MARKERS.concat(liveEarthMarkers()).forEach(m=>{
         const p=projectMap(m.lon,m.lat,W,H);
         const g=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,16);
         g.addColorStop(0,m.color+'cc'); g.addColorStop(1,m.color+'00');
@@ -2459,7 +2630,7 @@ REG({
       const rect=cv.getBoundingClientRect();
       const x=(e.clientX-rect.left)*1.5,y=(e.clientY-rect.top)*1.5;
       const lon=x/W*360-180,lat=90-y/H*180;
-      const near=EARTH_MARKERS.filter(m=>Math.abs(m.lat-lat)<7&&Math.abs(m.lon-lon)<9);
+      const near=EARTH_MARKERS.concat(liveEarthMarkers()).filter(m=>Math.abs(m.lat-lat)<7&&Math.abs(m.lon-lon)<9);
       if(near.length) openModal({title:near[0].n,icon:'map-pin',body:`<p style="line-height:1.7">${esc(near[0].note)}</p><div class="note">SIMULASI/berbasis lokasi nyata — bukan citra resolusi tinggi.</div>`});
     };
     // grafik
@@ -2470,34 +2641,39 @@ REG({
       datasets:[{label:'Tren 10 th (%)',data:[-2.1,+8.4,-13,-4.9],backgroundColor:['#00e676','#ffb020','#7dd3fc','#ff3b5c'],borderRadius:6}]},
       options:{plugins:{legend:{display:false}}}});
     // events list
-    const evList=()=>$('#eoEvents').innerHTML=EARTH_MARKERS.slice(0,8).map(m=>`
+    // events list — LIVE (USGS/EONET) bila ada, else demo berlabel SIMULASI
+    const evList=()=>{
+      const live=liveEarthMarkers();
+      $('#eoEvents').innerHTML=live.length?live.slice(0,14).map(m=>`
+      <div class="list-row"><i data-lucide="${m.icon||'orbit'}" style="color:${m.color}"></i>
+      <div class="body"><b>${esc(m.n)}</b><p>${esc(m.note)}</p><div class="meta"><span class="badge b-live">LIVE${m.link?` <a href="${esc(m.link)}" target="_blank" rel="noopener">sumber ↗</a>`:''}</span><span>${m.lat.toFixed(1)}°, ${m.lon.toFixed(1)}°</span></div></div></div>`).join('')
+      :EARTH_MARKERS.slice(0,8).map(m=>`
       <div class="list-row"><i data-lucide="${m.type==='vulkan'?'mountain':m.type==='kebakaran'?'flame':'cloud'}" style="color:${m.color}"></i>
       <div class="body"><b>${esc(m.n)}</b><p>${esc(m.note)}</p><div class="meta"><span class="badge b-sim">SIMULASI</span><span>${m.lat.toFixed(1)}°, ${m.lon.toFixed(1)}°</span></div></div></div>`).join('');
+    };
     evList();
+    const remountGlobe=()=>mountScene($('#eoGlobe'),c=>buildGlobe(c,{satellites:SATS.filter(s=>['Earth Observation Satellites','Weather Satellites'].includes(s.cat)&&s.status==='Operational'),markers:EARTH_MARKERS.concat(liveEarthMarkers()),
+      onMarker:m=>openModal({title:m.n,icon:'map-pin',body:`<p style="line-height:1.7">${esc(m.note)}</p>${m.link?`<p><a href="${esc(m.link)}" target="_blank" rel="noopener">Sumber resmi ↗</a></p>`:''}`}),
+      onEarth:(lat,lon)=>toast('Lokasi dipilih',`Lat ${lat.toFixed(1)}° Lon ${lon.toFixed(1)}°`,'info')}));
+    // muat event nyata otomatis saat halaman dibuka (tidak hanya lewat tombol)
+    (async()=>{ await fetchEarthEvents(); updateEarthBadge(); evList(); drawMap();
+      if(liveEarthMarkers().length) remountGlobe(); })();
     $('#eoLayer').onchange=e=>{
       const v=e.target.value;
-      const visible=v==='all'?EARTH_MARKERS:EARTH_MARKERS.filter(m=>({daynight:['kutub','laut'],thermal:['vulkan','kebakaran'],polar:['kutub'],vegetasi:['vegetasi']}[v]||[]).includes(m.type));
+      const base=EARTH_MARKERS.concat(liveEarthMarkers());
+      const visible=v==='all'?base:base.filter(m=>({daynight:['kutub','laut'],thermal:['vulkan','kebakaran','gempa'],polar:['kutub'],vegetasi:['vegetasi']}[v]||[]).includes(m.type));
       toast('Layer diperbarui',visible.length+' penanda ditampilkan pada globe & peta.','info');
       mountScene($('#eoGlobe'),c=>buildGlobe(c,{satellites:SATS.filter(s=>['Earth Observation Satellites','Weather Satellites'].includes(s.cat)&&s.status==='Operational'),markers:visible,
         onMarker:m=>openModal({title:m.n,icon:'map-pin',body:`<p style="line-height:1.7">${esc(m.note)}</p>`}),
         onEarth:(lat,lon)=>toast('Koordinat',lat.toFixed(1)+'°, '+lon.toFixed(1)+'°','info')}));
     };
     $('#eoRefresh').onclick=async()=>{
-      $('#eoLiveBadge').textContent='EONET: menghubungi…';
-      const r=await fetchJSON('https://eonet.gsfc.nasa.gov/api/v3/events?limit=12',{cacheKey:'eonet'});
-      if(r.ok){
-        const evs=(r.data.events||[]).slice(0,10);
-        $('#eoLiveBadge').textContent=r.live?'EONET: LIVE':'EONET: CACHED';
-        $('#eoEvents').innerHTML=evs.length?evs.map(e=>`
-          <div class="list-row"><i data-lucide="orbit" style="color:var(--neon)"></i>
-          <div class="body"><b>${esc(e.title)}</b><div class="meta"><span class="badge ${r.live?'b-live':'b-cache'}">${r.live?'LIVE DATA':'CACHED DATA'}</span>${e.categories&&e.categories[0]?`<span>${esc(e.categories[0].title)}</span>`:''}${e.link?`<a href="${esc(e.link)}" target="_blank" rel="noopener">sumber ↗</a>`:''}</div></div></div>`).join('')
-          :'<div class="empty">Tidak ada event aktif.</div>';
-        toast('EONET tersambung',evs.length+' event geofisika publik dimuat.','ok');
-      } else {
-        $('#eoLiveBadge').textContent='EONET: UNAVAILABLE';
-        $('#eoEvents').innerHTML='<div class="errbox">NASA EONET tidak dapat dijangkau (jaringan/CORS). Menampilkan data demo dengan label SIMULASI.</div>'+$('#eoEvents').innerHTML;
-        toast('EONET gagal','Fallback ke data demo.','warn');
-      }
+      const b=$('#eoLiveBadge'); if(b) b.textContent='Menghubungi EONET & USGS…';
+      await fetchEarthEvents();
+      updateEarthBadge(); evList(); drawMap();
+      const n=liveEarthMarkers().length;
+      if(n){ toast('Event geofisika',n+' event nyata dimuat (USGS/EONET).','ok'); remountGlobe(); }
+      else toast('Fallback','EONET & USGS tak terjangkau — daftar demo (SIMULASI) aktif.','warn');
       refreshIcons($('#view'));
     };
     $('#eoHist').onclick=()=>{
@@ -2942,11 +3118,13 @@ REG({
   sub:{id:'Aktivitas matahari & dampaknya: flare, CME, angin matahari, Kp index, aurora, radiasi — plus magnetosfer 3D-lite & prakiraan.',en:'Solar activity & impacts: flares, CMEs, solar wind, Kp index, aurora, radiation — with magnetosphere view & forecast.'},
   render(view){
     const w=weatherNow(), ks=kpStatus(w.kp);
+    const srcs=w._srcs||{}, wLive=!!w._live;
     const lv=['Normal','Minor','Moderate','Strong','Severe','Extreme'];
+    const swSt=apiStatus('dscovr').status!=='SIMULATED'?apiStatus('dscovr').status:apiStatus('swpc').status;
     view.innerHTML=`
     <div class="page-head">
       <div><h1><i data-lucide="sun"></i> ${esc(L(this.name))}</h1><p>${esc(L(this.sub))}</p></div>
-      <div class="page-actions"><span class="badge ${badgeFor(apiStatus('swpc').status)}">${apiStatus('swpc').status==='LIVE'?'LIVE (NOAA SWPC)':apiStatus('swpc').status==='CACHED'?'CACHED (NOAA)':'SIMULATED DATA'}</span>
+      <div class="page-actions"><span class="badge ${badgeFor(swSt)}">${wLive?'LIVE — NOAA SWPC DSCOVR/GOES':swSt==='CACHED'?'CACHED (NOAA)':'SIMULATED DATA'}</span>
       <button class="btn" id="swRefr"><i data-lucide="refresh-cw"></i> Refresh</button></div>
     </div>
     <div class="grid g4 mb">
@@ -2954,16 +3132,16 @@ REG({
         <canvas id="kpGauge" width="340" height="170" style="width:min(340px,100%)"></canvas>
         <small>Geomagnetic — Kp Index (${ks[0]})</small>
       </div>
-      ${kpiCard({icon:'wind',label:'Solar Wind Speed',val:w.wind+' km/s',status:w.wind>500?'ELEVATED':'NORMAL',stCls:w.wind>500?'st-warn':'st-ok',dir:'flat',delta:'demo'})}
-      ${kpiCard({icon:'atom',label:'Proton Density',val:w.dens+' p/cm³',status:'NORMAL',stCls:'st-ok',dir:'flat',delta:'demo'})}
-      ${kpiCard({icon:'magnet',label:'IMF Bt / Bz',val:w.bt+' / '+w.bz+' nT',status:w.bz<-5?'SOUTH (aktiv)':'NORTH',stCls:w.bz<-5?'st-warn':'st-info',dir:'flat',delta:'demo'})}
-      ${kpiCard({icon:'sun-medium',label:'Sunspot Number',val:String(w.ss),status:'SIKLUS 25',stCls:'st-cos',dir:'flat',delta:'demo'})}
-      ${kpiCard({icon:'radio',label:'F10.7 Radio Flux',val:String(w.f107)+' sfu',status:'NORMAL',stCls:'st-ok',dir:'flat',delta:'demo'})}
-      ${kpiCard({icon:'zap',label:'Flare Terakhir',val:w.flares[0].cls,status:kc2status(w.flares[0].cls),stCls:w.flares[0].cls[0]==='M'?'st-warn':'st-ok',dir:'flat',delta:'SIMULASI'})}
-      ${kpiCard({icon:'shield-alert',label:'Radiasi / Blackout',val:w.rad.split('—')[0]+' / '+w.rbn.split('—')[0],status:'MONITORED',stCls:'st-warn',dir:'flat',delta:'demo'})}
+      ${kpiCard({icon:'wind',label:'Solar Wind Speed',val:w.wind+' km/s',status:w.wind>500?'ELEVATED':'NORMAL',stCls:w.wind>500?'st-warn':'st-ok',dir:'flat',delta:srcs.wind||'simulasi'})}
+      ${kpiCard({icon:'atom',label:'Proton Density',val:w.dens+' p/cm³',status:'NORMAL',stCls:'st-ok',dir:'flat',delta:srcs.dens||'simulasi'})}
+      ${kpiCard({icon:'magnet',label:'IMF Bt / Bz',val:w.bt+' / '+w.bz+' nT',status:w.bz<-5?'SOUTH (aktiv)':'NORTH',stCls:w.bz<-5?'st-warn':'st-info',dir:'flat',delta:srcs.bt||'simulasi'})}
+      ${kpiCard({icon:'sun-medium',label:'Sunspot Number',val:String(w.ss),status:'SIKLUS 25',stCls:'st-cos',dir:'flat',delta:srcs.ss||'simulasi'})}
+      ${kpiCard({icon:'radio',label:'F10.7 Radio Flux',val:String(w.f107)+' sfu',status:'NORMAL',stCls:'st-ok',dir:'flat',delta:srcs.f107||'simulasi'})}
+      ${kpiCard({icon:'zap',label:'Flare Terakhir',val:w.flares[0].cls,status:kc2status(w.flares[0].cls),stCls:w.flares[0].cls[0]==='M'?'st-warn':'st-ok',dir:'flat',delta:srcs.flare||'SIMULASI'})}
+      ${kpiCard({icon:'shield-alert',label:'Radiasi / Blackout',val:w.rad.split('—')[0]+' / '+w.rbn.split('—')[0],status:'MONITORED',stCls:'st-warn',dir:'flat',delta:'skala NOAA (est.)'})}
     </div>
     <div class="grid g-21 mb">
-      <div class="panel"><div class="panel-h"><h3><i data-lucide="activity"></i> Riwayat 48 Jam (simulasi)</h3><div class="spacer"></div>
+      <div class="panel"><div class="panel-h"><h3><i data-lucide="activity"></i> Riwayat 48 Jam ${wLive?'(Kp nyata NOAA · wind/dens ilustratif)':'(simulasi)'}</h3><div class="spacer"></div>
         <span class="legend">${lv.map((l,i)=>`<i style="background:${kpColor(i)}"></i>${l}`).join('')}</span></div>
         <div class="panel-b"><div class="chartbox"><canvas id="swChart"></canvas></div></div></div>
       <div class="panel"><div class="panel-h"><h3><i data-lucide="orbit"></i> Magnetosfer Bumi</h3></div>
@@ -2973,7 +3151,7 @@ REG({
     <div class="grid g2 mb">
       <div class="panel"><div class="panel-h"><h3><i data-lucide="sparkles"></i> Aurora Forecast</h3></div>
         <div class="panel-b" id="swAurora"></div></div>
-      <div class="panel"><div class="panel-h"><h3><i data-lucide="flame"></i> Aktivitas Flare & CME (demo)</h3></div>
+      <div class="panel"><div class="panel-h"><h3><i data-lucide="flame"></i> Aktivitas Flare & CME ${wLive?'(LIVE GOES XRS / DONKI)':'(demo)'}</h3></div>
         <div class="panel-b" id="swFlares"></div></div>
     </div>
     <div class="panel mb"><div class="panel-h"><h3><i data-lucide="list-tree"></i> Prakiraan Cuaca Antariksa 7 Hari (simulasi)</h3></div>
@@ -2994,7 +3172,7 @@ REG({
         <div class="tiles">
           ${lv.map((l,i)=>`<div class="tile"><small>Level ${i}</small><b style="color:${kpColor(i)}">${l}</b></div>`).join('')}
         </div>
-        <div class="note">Angka halaman ini SIMULASI. Data resmi: NOAA SWPC (swpc.noaa.gov) — SIS mencoba endpoint "noaa-planetary-k-index" saat refresh.</div>
+        <div class="note">Kp, angin matahari (DSCOVR), Bt/Bz, F10.7 dan kelas flare (GOES XRS) = ${wLive?'<b>LIVE</b> dari NOAA SWPC':'simulasi (SWPC tak terjangkau)'}. Densitas proton & prakiraan 7 hari tetap simulasi — tidak ada endpoint realtime publik. Data resmi: swpc.noaa.gov.</div>
       </div>
     </div>`;
     drawKpGauge('kpGauge',w.kp);
@@ -3009,12 +3187,12 @@ REG({
     $('#swAurora').innerHTML=bands.map((b,i)=>`
       <div class="set-row"><div class="info"><b style="color:${i===0?'var(--neon)':'inherit'}">${i===0?'▶ ':'&nbsp;&nbsp;&nbsp;'}≤ ${b[0]}° lat.</b><span>${b[1]}</span></div>
       <span class="risk-lv" style="background:${kpColor(w.kp)}22;color:${kpColor(w.kp)}">${i===0?'AKTIF (est.)':'makin langka'}</span></div>`).join('')+
-      `<div class="note ok">Prakiraan berbasis Kp simulasi ${w.kp} — cek peta OVATION NOAA untuk aurora resmi.</div>`;
+      `<div class="note ok">Prakiraan berbasis Kp ${wLive?'NYATA (NOAA)':'simulasi'} = ${w.kp} — cek peta OVATION NOAA untuk aurora resmi.</div>`;
     $('#swFlares').innerHTML=w.flares.map(f=>`
       <div class="list-row"><i data-lucide="zap" style="color:${f.cls[0]==='M'?'var(--warn)':'var(--ok)'}"></i>
-      <div class="body"><b>Flare ${esc(f.cls)} — ${esc(f.region)}</b><p>${esc(f.loc)} · ${esc(f.note)}</p><div class="meta"><span>${fmtDate(f.peak)}</span><span class="badge b-sim">SIMULASI</span></div></div></div>`).join('')+
+      <div class="body"><b>Flare ${esc(f.cls)} — ${esc(f.region)}</b><p>${esc(f.loc)} · ${esc(f.note)}</p><div class="meta"><span>${fmtDate(f.peak)}</span><span class="badge ${f.live?'b-live':'b-sim'}">${f.live?'LIVE':'SIMULASI'}</span></div></div></div>`).join('')+
       w.cmes.map(c=>`<div class="list-row"><i data-lucide="cloud-lightning" style="color:var(--danger)"></i>
-      <div class="body"><b>CME — ${esc(c.v)} km/s</b><p>${esc(c.dir)} · lebar ${esc(c.width)} · ${esc(c.note)}</p><div class="meta"><span>${fmtDate(c.t)}</span><span class="badge b-sim">SIMULASI</span></div></div></div>`).join('');
+      <div class="body"><b>CME — ${esc(String(c.v))} km/s</b><p>${esc(c.dir)} · lebar ${esc(c.width)} · ${esc(c.note)}</p><div class="meta"><span>${fmtDate(c.t)}</span><span class="badge ${c.live?'b-live':'b-sim'}">${c.live?'LIVE':'SIMULASI'}</span></div></div></div>`).join('');
     $('#swRefr').onclick=()=>{ loadLiveData(true); toast('Refresh','Menghubungi NOAA SWPC…','info'); };
     refreshIcons(view);
   }
@@ -4862,7 +5040,7 @@ REG({
       rd.readAsText(file);
     };
     $('#dmBackup').onclick=()=>{
-      const snap={version:'SIS v2.1.0',t:Date.now(),data:{}};
+      const snap={version:'SIS v2.2.0',t:Date.now(),data:{}};
       Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]);
       snap.data.settings=SET;
       download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json');
@@ -4985,7 +5163,7 @@ REG({
     </div>
     <div class="panel pad"><h3 style="font-family:var(--fontHead);font-size:.76rem;letter-spacing:.12em;color:#7dd3fc;margin-bottom:8px">INFORMASI VERSI</h3>
       <div class="tiles">
-        <div class="tile"><small>Versi</small><b>SIS v2.1.0 (build 2026.11)</b></div>
+        <div class="tile"><small>Versi</small><b>SIS v2.2.0 (build 2026.11)</b></div>
         <div class="tile"><small>Tagline</small><b>Beyond Earth, Beyond Intelligence</b></div>
         <div class="tile"><small>Arsitektur</small><b>Single-file HTML + LocalStorage + Supabase opsional</b></div>
         <div class="tile"><small>Library</small><b>Three.js r128 · Chart.js 4 · Lucide · satellite.js (opsional)</b></div>
@@ -5008,7 +5186,7 @@ REG({
     $('#setNotify').onchange=e=>{ SET.notify=e.target.checked; saveSet(); };
     $('#setSound').onchange=e=>{ SET.sound=e.target.checked; saveSet(); };
     $('#setPresent').onclick=()=>togglePresentation();
-    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.1.0',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
+    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.0',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
     $('#setRestore').onclick=()=>$('#setFile').click();
     $('#setFile').onchange=ev=>{
       const f=ev.target.files[0]; if(!f) return;
