@@ -483,7 +483,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <nav id="nav"></nav>
     <div class="side-foot">
       <div class="dotrow"><span class="dot d-ok"></span><span id="sideSys">SYSTEM NOMINAL</span></div>
-      <div class="mini">v2.2.1 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
+      <div class="mini">v2.2.3 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
     </div>
   </aside>
 
@@ -515,7 +515,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <main id="view"></main>
 
     <div class="footer-bar">
-      <span><b style="color:var(--neon)">SIS v2.2.1</b></span><span class="sep"></span>
+      <span><b style="color:var(--neon)">SIS v2.2.3</b></span><span class="sep"></span>
       <span id="footSources">Data sources: —</span><span class="sep"></span>
       <span id="footUpd">Last sync: —</span><span class="sep"></span>
       <div class="ticker"><span id="footTicker">MENYIAPKAN SISTEM…</span></div>
@@ -532,7 +532,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
 <script>
 'use strict';
 /* ================================================================
-   SPACE INTELLIGENCE SYSTEM (SIS) v2.2.1 — Single-file application
+   SPACE INTELLIGENCE SYSTEM (SIS) v2.2.3 — Single-file application
    All modules, demo data, 3D, charts, storage & optional Supabase sync.
    ================================================================ */
 
@@ -744,7 +744,15 @@ function fetchJSON(url,opts){
   const key=opts.cacheKey||url;
   const ctrl=new AbortController();
   const timer=setTimeout(()=>ctrl.abort(), opts.timeout||9000);
-  return fetch(url,{signal:ctrl.signal})
+  // Edge Function Supabase: kirim apikey + Bearer anon (JWT anon = JWT valid) —
+  // diterima baik verify_jwt=true maupun false; tanpa ini function yang di-deploy
+  // tanpa config.toml (verify_jwt default true) menjawab 401 → proxy gagal diam.
+  const hdr={};
+  if(/\/functions\/v1\//.test(url)){
+    const anon=(COLL.supaCfg||{}).key;
+    if(anon){ hdr.apikey=anon; hdr.Authorization='Bearer '+anon; }
+  }
+  return fetch(url,{signal:ctrl.signal,headers:hdr})
     .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(data=>{ clearTimeout(timer); try{COLL.cache[key]={t:Date.now(),d:data};persist('cache');}catch(e){} return {ok:true,data,live:true}; })
     .catch(err=>{
@@ -848,7 +856,7 @@ async function supaConnect(){
   SUPA.status='connected'; SUPA.lastError='';
   markSource('supabase','Supabase Cloud Sync','LIVE',cfg.url);
   logAct('supabase','Terhubung ke Supabase: '+cfg.url);
-  // sinkronisasi pengaturan antar perangkat (v2.2.1): tarik snapshot koneksi/kunci, lalu kirim versi lokal
+  // sinkronisasi pengaturan antar perangkat (v2.2.3): tarik snapshot koneksi/kunci, lalu kirim versi lokal
   try{
     const got=await supaSettingsPull();
     if(got) logAct('supabase','Pengaturan koneksi/kunci NASA ditarik dari cloud (antar perangkat).');
@@ -888,13 +896,13 @@ async function supaPull(){
   return n;
 }
 
-/* ---------------- Sinkronisasi pengaturan antar perangkat (v2.2.1) ----------------
+/* ---------------- Sinkronisasi pengaturan antar perangkat (v2.2.3) ----------------
    Kredensial (URL + anon key + opsi kunci NASA) hidup di localStorage = per-device.
    Snapshot disimpan ke tabel api_cache (source='sis_settings') di project Supabase,
    sehingga perangkat lain yang Connect ke project yang SAMA otomatis menariknya. */
 function supaSettingsPayload(includeKey){
   return {supaCfg:{url:COLL.supaCfg.url,key:COLL.supaCfg.key,table:COLL.supaCfg.table,auto:COLL.supaCfg.auto,proxy:COLL.supaCfg.proxy,syncKey:!!includeKey},
-    nasaKey:includeKey?(SET.nasaKey||''):'', ver:'v2.2.1', ts:new Date().toISOString()};
+    nasaKey:includeKey?(SET.nasaKey||''):'', ver:'v2.2.3', ts:new Date().toISOString()};
 }
 async function supaSettingsPush(includeKey){
   if(!SUPA.client||!COLL.supaCfg.url) return false;
@@ -2521,7 +2529,9 @@ async function loadLiveData(force){
       if(!r.ok){ const pu=supaProxyURL('https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json'); if(pu) r=await fetchJSON(pu,{cacheKey:'celes_stationsp',timeout:15000}); }
       markSource('celesTrak','CelesTrak GP (TLE)',r.ok?(r.live?'LIVE':'CACHED'):'SIMULATED','https://celestrak.org/NORAD/elements/gp.php'); if(r.ok){ STATE.celestrak=r.data; if(applyTLE(r.data)) logAct('sgp4','TLE CelesTrak termuat — propagasi SGP4 aktif'); } });
   fetchISSNow();
-  fetchHorizons(); fetchProbes(); fetchExoLive(); fetchSpaceWeather(); fetchEarthEvents(); refreshSFN(); // engine realtime (04b)
+  // force diteruskan ke semua fetcher — tanpa ini guard TTL 15–30 menit membuat
+  // Refresh/toggle proxy diabaikan (hasil gagal lama tetap "menempel" SIMULATED)
+  fetchHorizons(force); fetchProbes(force); fetchExoLive(force); fetchSpaceWeather(force); fetchEarthEvents(); refreshSFN(); // engine realtime (04b)
 }
 /* ================================================================
    MODUL 2 — SOLAR SYSTEM EXPLORER  |  MODUL 3 — EARTH OBSERVATION
@@ -3501,7 +3511,7 @@ REG({
       if(b){ const live=HORIZ.probeN>0; b.className='badge '+(live?'b-live':'b-hist');
         b.textContent=live?('Posisi nyata '+HORIZ.probeN+'/'+PROBES.length+' probe'):'Fallback model (Horizons tak terjangkau)'; }
       const nt=$('#probeNote');
-      if(nt) nt.innerHTML=HORIZ.probeN>0?'Delay one-way = waktu tempuh sinyal radio Bumi→probe (c = 499,005 s/AU). Vektor posisi langsung dari <b>JPL Horizons</b>.':'JPL Horizons tidak terjangkau dari jaringan ini (offline/CORS). Jarak fallback = model estimasi berlabel SIMULATED. Aktifkan Edge Function <b>nasa-proxy</b> (PANDUAN §5) untuk data LIVE.';
+      if(nt) nt.innerHTML=HORIZ.probeN>0?'Delay one-way = waktu tempuh sinyal radio Bumi→probe (c = 499,005 s/AU). Vektor posisi langsung dari <b>JPL Horizons</b>.':'JPL Horizons tidak terjangkau langsung (offline/CORS). Jarak fallback = model estimasi berlabel SIMULATED. Langkah LIVE: ① deploy <b>nasa-proxy</b> (PANDUAN §5) ② switch <b>Proxy API</b> di Data Management (memicu rute ulang otomatis) ③ bila tetap gagal, redeploy function dari folder yang memuat <b>config.toml</b> (verify_jwt=false) — v2.2.3 kirim apikey otomatis sehingga 401 teratasi.';
     };
     renderProbeRows();
     fetchProbes().then(renderProbeRows).catch(()=>{});
@@ -5177,7 +5187,7 @@ REG({
       rd.readAsText(file);
     };
     $('#dmBackup').onclick=()=>{
-      const snap={version:'SIS v2.2.1',t:Date.now(),data:{}};
+      const snap={version:'SIS v2.2.3',t:Date.now(),data:{}};
       Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]);
       snap.data.settings=SET;
       download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json');
@@ -5235,7 +5245,9 @@ REG({
       }catch(err){ toast('Pull gagal',err.message||String(err),'err'); }
     };
     $('#suAuto').onchange=e=>{ COLL.supaCfg.auto=e.target.checked; persist('supaCfg'); if(COLL.supaCfg.auto&&!SUPA.client) toast('Auto-sync','Akan aktif setelah Connect berhasil.','info'); };
-    $('#suProxy').onchange=e=>{ COLL.supaCfg.proxy=e.target.checked; persist('supaCfg'); toast('Proxy Edge','Horizons/ExoArchive akan dirutekan via nasa-proxy setelah deploy.','info'); };
+    $('#suProxy').onchange=e=>{ COLL.supaCfg.proxy=e.target.checked; persist('supaCfg');
+      if(e.target.checked){ toast('Proxy Edge','Rute ulang Horizons/ExoArchive/TLE via nasa-proxy…','info'); if(typeof loadLiveData==='function') loadLiveData(true); }
+      else toast('Proxy Edge','Proxy dimatikan — kembali ke rute langsung.','info'); };
     $('#suSyncKey').onchange=e=>{ COLL.supaCfg.syncKey=e.target.checked; persist('supaCfg'); if(SUPA.client) supaSettingsPush(COLL.supaCfg.syncKey&&!!SET.nasaKey).then(ok=>{ if(ok) toast('Sinkron pengaturan','Snapshot di cloud diperbarui.','ok'); }); };
     $('#suJoin').onclick=()=>{
       if(!COLL.supaCfg.url||!COLL.supaCfg.key){
@@ -5316,7 +5328,7 @@ REG({
     </div>
     <div class="panel pad"><h3 style="font-family:var(--fontHead);font-size:.76rem;letter-spacing:.12em;color:#7dd3fc;margin-bottom:8px">INFORMASI VERSI</h3>
       <div class="tiles">
-        <div class="tile"><small>Versi</small><b>SIS v2.2.1 (build 2026.11)</b></div>
+        <div class="tile"><small>Versi</small><b>SIS v2.2.3 (build 2026.11)</b></div>
         <div class="tile"><small>Tagline</small><b>Beyond Earth, Beyond Intelligence</b></div>
         <div class="tile"><small>Arsitektur</small><b>Single-file HTML + LocalStorage + Supabase opsional</b></div>
         <div class="tile"><small>Library</small><b>Three.js r128 · Chart.js 4 · Lucide · satellite.js (opsional)</b></div>
@@ -5339,7 +5351,7 @@ REG({
     $('#setNotify').onchange=e=>{ SET.notify=e.target.checked; saveSet(); };
     $('#setSound').onchange=e=>{ SET.sound=e.target.checked; saveSet(); };
     $('#setPresent').onclick=()=>togglePresentation();
-    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.1',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
+    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.3',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
     $('#setRestore').onclick=()=>$('#setFile').click();
     $('#setFile').onchange=ev=>{
       const f=ev.target.files[0]; if(!f) return;
@@ -5638,7 +5650,7 @@ window.addEventListener('unhandledrejection',e=>{ console.error('SIS promise:',e
 /* ---- BOOT ---- */
 function boot(){
   if(window.__booted) return; window.__booted=true;
-  // Tautan gabung (#sisjoin=…) — terapkan kredensial dari tautan antar perangkat (v2.2.1)
+  // Tautan gabung (#sisjoin=…) — terapkan kredensial dari tautan antar perangkat (v2.2.3)
   try{
     const jm=(location.hash||'').match(/sisjoin=([^&]+)/);
     if(jm){
@@ -5685,8 +5697,8 @@ function boot(){
       .catch(err=>toast('Supabase gagal',(err.message||String(err))+' — berjalan lokal.','warn'));
   }
   // sambutan
-  setTimeout(()=>toast('SIS v2.2.1 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
-  logAct('system','SIS diinisialisasi (boot v2.2.1)');
+  setTimeout(()=>toast('SIS v2.2.3 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
+  logAct('system','SIS diinisialisasi (boot v2.2.3)');
 }
 document.addEventListener('DOMContentLoaded',boot);
 if(document.readyState!=='loading'&&!window.__booted){ window.__booted=true; boot(); }
