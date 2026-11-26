@@ -483,7 +483,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <nav id="nav"></nav>
     <div class="side-foot">
       <div class="dotrow"><span class="dot d-ok"></span><span id="sideSys">SYSTEM NOMINAL</span></div>
-      <div class="mini">v2.1.0 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
+      <div class="mini">v2.2.1 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
     </div>
   </aside>
 
@@ -515,7 +515,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <main id="view"></main>
 
     <div class="footer-bar">
-      <span><b style="color:var(--neon)">SIS v2.1.0</b></span><span class="sep"></span>
+      <span><b style="color:var(--neon)">SIS v2.2.1</b></span><span class="sep"></span>
       <span id="footSources">Data sources: —</span><span class="sep"></span>
       <span id="footUpd">Last sync: —</span><span class="sep"></span>
       <div class="ticker"><span id="footTicker">MENYIAPKAN SISTEM…</span></div>
@@ -532,7 +532,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
 <script>
 'use strict';
 /* ================================================================
-   SPACE INTELLIGENCE SYSTEM (SIS) v2.1.0 — Single-file application
+   SPACE INTELLIGENCE SYSTEM (SIS) v2.2.1 — Single-file application
    All modules, demo data, 3D, charts, storage & optional Supabase sync.
    ================================================================ */
 
@@ -848,6 +848,12 @@ async function supaConnect(){
   SUPA.status='connected'; SUPA.lastError='';
   markSource('supabase','Supabase Cloud Sync','LIVE',cfg.url);
   logAct('supabase','Terhubung ke Supabase: '+cfg.url);
+  // sinkronisasi pengaturan antar perangkat (v2.2.1): tarik snapshot koneksi/kunci, lalu kirim versi lokal
+  try{
+    const got=await supaSettingsPull();
+    if(got) logAct('supabase','Pengaturan koneksi/kunci NASA ditarik dari cloud (antar perangkat).');
+    await supaSettingsPush(!!(COLL.supaCfg&&COLL.supaCfg.syncKey&&SET.nasaKey));
+  }catch(e){ /* non-fatal — sinkron pengaturan opsional */ }
   return true;
 }
 const SUPA_COLLECTIONS=['missions','alerts','notes','hypo','signals','calEvents','objects','reports'];
@@ -880,6 +886,34 @@ async function supaPull(){
   SUPA_COLLECTIONS.forEach(c=>persist(c));
   logAct('supabase','Pull '+n+' record dari cloud.');
   return n;
+}
+
+/* ---------------- Sinkronisasi pengaturan antar perangkat (v2.2.1) ----------------
+   Kredensial (URL + anon key + opsi kunci NASA) hidup di localStorage = per-device.
+   Snapshot disimpan ke tabel api_cache (source='sis_settings') di project Supabase,
+   sehingga perangkat lain yang Connect ke project yang SAMA otomatis menariknya. */
+function supaSettingsPayload(includeKey){
+  return {supaCfg:{url:COLL.supaCfg.url,key:COLL.supaCfg.key,table:COLL.supaCfg.table,auto:COLL.supaCfg.auto,proxy:COLL.supaCfg.proxy,syncKey:!!includeKey},
+    nasaKey:includeKey?(SET.nasaKey||''):'', ver:'v2.2.1', ts:new Date().toISOString()};
+}
+async function supaSettingsPush(includeKey){
+  if(!SUPA.client||!COLL.supaCfg.url) return false;
+  const {error}=await SUPA.client.from('api_cache')
+    .upsert({source:'sis_settings',payload:supaSettingsPayload(includeKey),fetched_at:new Date().toISOString()},{onConflict:'source'});
+  if(error){ logAct('supabase','Push pengaturan gagal: '+error.message); return false; }
+  logAct('supabase','Pengaturan dikirim ke cloud'+(includeKey?' (termasuk kunci NASA).':' (tanpa kunci NASA).'));
+  return true;
+}
+async function supaSettingsPull(){
+  if(!SUPA.client) return false;
+  const {data,error}=await SUPA.client.from('api_cache').select('payload').eq('source','sis_settings').limit(1);
+  if(error||!data||!data.length) return false;
+  const p=data[0].payload||{}; let applied=0;
+  if(p.supaCfg&&p.supaCfg.url&&p.supaCfg.key){
+    COLL.supaCfg=Object.assign({},COLL.supaCfg,p.supaCfg); persist('supaCfg'); applied++;
+  }
+  if(p.nasaKey&&!SET.nasaKey){ SET.nasaKey=p.nasaKey; saveSet(); applied++; }
+  return applied>0;
 }
 
 /* ---------------- Modal system ---------------- */
@@ -1270,7 +1304,7 @@ async function fetchSpaceWeather(force){
   if(!flares.length&&flareCls) flares=[{cls:flareCls,peak:Date.now(),region:'GOES XRS (SWPC)',loc:'—',
     note:'Kelas maksimum 24 jam dari flux X-ray GOES nyata — bukan simulasi',live:true}];
   const w=weatherNowSim(); // basis: series ilustratif & nilai fallback deterministik
-  const srcs={kp:'simulasi',wind:'simulasi',dens:'simulasi (tanpa endpoint publik)',bt:'simulasi',ss:'est. F10.7',f107:'simulasi',flare:'SIMULASI',cme:'SIMULASI'};
+  const srcs={kp:'simulasi',wind:'simulasi',dens:'simulasi (tanpa endpoint publik)',bt:'simulasi',ss:'est. F10.7',f107:'simulasi',flare:'SIMULASI',cme:'simulasi (DONKI perlu kunci NASA)'};
   if(kp!=null){ w.kp=Math.round(kp*10)/10; srcs.kp='LIVE NOAA'; }
   if(windV!=null){ w.wind=Math.round(windV); srcs.wind='LIVE DSCOVR'; }
   if(btV!=null){ w.bt=Math.round(btV*10)/10; srcs.bt='LIVE DSCOVR'; }
@@ -1297,7 +1331,33 @@ async function fetchSpaceWeather(force){
     w._live?((kpLive||rW.live||rX.live)?'LIVE':'CACHED'):'SIMULATED',
     'https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json');
   if(w._live) logAct('swpc','Cuaca antariksa nyata: angin '+w.wind+' km/s · Bt '+w.bt+' nT · Bz '+w.bz+' nT · F10.7 '+w.f107+' sfu · flare maks '+w.flares[0].cls);
+  await refreshSWPCAlerts();
   return w._live?1:0;
+}
+
+/* ---------- Alert resmi NOAA SWPC (products/alerts.json — CORS terbuka) ----------
+   Feed peringatan resmi: X-ray Event exceeded (flare), geomagnetic
+   warning/watch, radio blackout (R-scale), dsb. 30 hari terakhir, 10 terbaru.
+   Catatan skema: issue_datetime = 'YYYY-MM-DD HH:MM:SS.mmm' UTC (bukan ISO 8601)
+   dan message berisi header CRLF — sisihkan baris Serial/Issue Time. */
+async function refreshSWPCAlerts(){
+  const r=await fetchJSON('https://services.swpc.noaa.gov/products/alerts.json',{cacheKey:'swpc_alerts2',timeout:12000});
+  const ok=r.ok&&Array.isArray(r.data);
+  const now=Date.now();
+  STATE.swpcAlerts=ok?{st:r.live?'LIVE':'CACHED',ts:now,list:r.data
+    .map(a=>{
+      const t=Date.parse(String(a.issue_datetime||'').replace(' ','T')+'Z');
+      const lines=String(a.message||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+      const msg=lines.filter(l=>!/^Space Weather Message Code:|^Serial Number:|^Issue Time:/i.test(l))
+        .slice(0,2).join(' · ')||lines[0]||'—';
+      return {pid:String(a.product_id||'—'),t,msg,sub:((a.message||'').match(/^Issue Time: (.+)$/m)||[])[1]||''};
+    })
+    .filter(a=>isFinite(a.t)&&now-a.t<30*864e5)
+    .sort((a,b)=>b.t-a.t)
+    .slice(0,10)}:null;
+  markSource('swpcAlerts','NOAA SWPC — alert resmi (products/alerts.json)',ok?(r.live?'LIVE':'CACHED'):'UNAVAILABLE','https://services.swpc.noaa.gov/products/alerts.json');
+  if(ok&&STATE.swpcAlerts.list.length) logAct('swpc','Alert resmi NOAA termuat: '+STATE.swpcAlerts.list.length+' (30 hari terakhir)');
+  return ok;
 }
 
 /* ---------- Event geofisika Bumi: NASA EONET + USGS gempa (nyata) ----------
@@ -1308,7 +1368,8 @@ async function refreshEONET(){
   if(r.ok&&r.data&&Array.isArray(r.data.events)){
     STATE.eonetEvs=r.data.events.map(eonetMarker).filter(Boolean);
     STATE.eonetSt=r.live?'LIVE':'CACHED';
-  } else { STATE.eonetEvs=[]; STATE.eonetSt='UNAVAILABLE'; }
+    markSource('eonet','NASA EONET — event geofisika',STATE.eonetSt,'https://eonet.gsfc.nasa.gov/api/v3/events');
+  } else { STATE.eonetEvs=[]; STATE.eonetSt='UNAVAILABLE'; markSource('eonet','NASA EONET — event geofisika','UNAVAILABLE','https://eonet.gsfc.nasa.gov/api/v3/events'); }
   updateEarthBadge();
   return STATE.eonetSt!=='UNAVAILABLE';
 }
@@ -1316,6 +1377,7 @@ async function refreshUSGS(){
   const r=await fetchJSON('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson',{cacheKey:'usgs45',timeout:12000});
   STATE.usgsEvs=(r.ok&&Array.isArray(r.data.features))?r.data.features.map(usgsMarker).filter(Boolean):[];
   STATE.usgsSt=STATE.usgsEvs.length?(r.live?'LIVE':'CACHED'):'UNAVAILABLE';
+  markSource('usgs','USGS — gempa M4.5+ global',STATE.usgsSt,'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson');
   updateEarthBadge();
   return STATE.usgsSt!=='UNAVAILABLE';
 }
@@ -3121,6 +3183,7 @@ REG({
     const srcs=w._srcs||{}, wLive=!!w._live;
     const lv=['Normal','Minor','Moderate','Strong','Severe','Extreme'];
     const swSt=apiStatus('dscovr').status!=='SIMULATED'?apiStatus('dscovr').status:apiStatus('swpc').status;
+    const alSt=(STATE.swpcAlerts||{}).st||'UNAVAILABLE';
     view.innerHTML=`
     <div class="page-head">
       <div><h1><i data-lucide="sun"></i> ${esc(L(this.name))}</h1><p>${esc(L(this.sub))}</p></div>
@@ -3153,6 +3216,8 @@ REG({
         <div class="panel-b" id="swAurora"></div></div>
       <div class="panel"><div class="panel-h"><h3><i data-lucide="flame"></i> Aktivitas Flare & CME ${wLive?'(LIVE GOES XRS / DONKI)':'(demo)'}</h3></div>
         <div class="panel-b" id="swFlares"></div></div>
+      <div class="panel"><div class="panel-h"><h3><i data-lucide="siren"></i> Alert Resmi NOAA SWPC (30 hari terakhir)</h3><div class="spacer"></div><span class="badge ${alSt==='LIVE'?'b-live':alSt==='CACHED'?'b-gray':'b-sim'}">${alSt}</span></div>
+        <div class="panel-b" id="swAlerts"></div></div>
     </div>
     <div class="panel mb"><div class="panel-h"><h3><i data-lucide="list-tree"></i> Prakiraan Cuaca Antariksa 7 Hari (simulasi)</h3></div>
       <div class="panel-b"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Hari</th><th>Kp est.</th><th>Status</th><th>Flare potensi</th><th>Aurora terlihat hingga</th><th>Catatan</th></tr></thead>
@@ -3172,7 +3237,7 @@ REG({
         <div class="tiles">
           ${lv.map((l,i)=>`<div class="tile"><small>Level ${i}</small><b style="color:${kpColor(i)}">${l}</b></div>`).join('')}
         </div>
-        <div class="note">Kp, angin matahari (DSCOVR), Bt/Bz, F10.7 dan kelas flare (GOES XRS) = ${wLive?'<b>LIVE</b> dari NOAA SWPC':'simulasi (SWPC tak terjangkau)'}. Densitas proton & prakiraan 7 hari tetap simulasi — tidak ada endpoint realtime publik. Data resmi: swpc.noaa.gov.</div>
+        <div class="note">Kp, angin matahari (DSCOVR), Bt/Bz, F10.7 dan kelas flare (GOES XRS) = ${wLive?'<b>LIVE</b> dari NOAA SWPC':'simulasi (SWPC tak terjangkau)'}. Alert resmi NOAA (alerts.json) = ${alSt}. Densitas proton & prakiraan 7 hari tetap simulasi — tidak ada endpoint realtime publik. Data resmi: swpc.noaa.gov.</div>
       </div>
     </div>`;
     drawKpGauge('kpGauge',w.kp);
@@ -3193,6 +3258,11 @@ REG({
       <div class="body"><b>Flare ${esc(f.cls)} — ${esc(f.region)}</b><p>${esc(f.loc)} · ${esc(f.note)}</p><div class="meta"><span>${fmtDate(f.peak)}</span><span class="badge ${f.live?'b-live':'b-sim'}">${f.live?'LIVE':'SIMULASI'}</span></div></div></div>`).join('')+
       w.cmes.map(c=>`<div class="list-row"><i data-lucide="cloud-lightning" style="color:var(--danger)"></i>
       <div class="body"><b>CME — ${esc(String(c.v))} km/s</b><p>${esc(c.dir)} · lebar ${esc(c.width)} · ${esc(c.note)}</p><div class="meta"><span>${fmtDate(c.t)}</span><span class="badge ${c.live?'b-live':'b-sim'}">${c.live?'LIVE':'SIMULASI'}</span></div></div></div>`).join('');
+    const al=STATE.swpcAlerts;
+    $('#swAlerts').innerHTML=(al&&al.list&&al.list.length)?al.list.map(a=>`
+      <div class="list-row"><i data-lucide="siren" style="color:${/X-ray|proton|blackout|extreme/i.test(a.msg)?'var(--warn)':'var(--neon)'}"></i>
+      <div class="body"><b>${esc(a.pid)}</b><p>${esc(a.msg)}</p><div class="meta"><span>${fmtDate(a.t)}</span><span class="badge ${al.st==='LIVE'?'b-live':'b-gray'}">${al.st}</span></div></div></div>`).join(''):
+      '<div class="note">Feed alert resmi NOAA (alerts.json) tidak terjangkau — peringatan di modul ini tetap simulasi/estimasi berlabel jujur. Coba tombol Refresh.</div>';
     $('#swRefr').onclick=()=>{ loadLiveData(true); toast('Refresh','Menghubungi NOAA SWPC…','info'); };
     refreshIcons(view);
   }
@@ -4841,9 +4911,22 @@ drop policy if exists "sis anon demo access" on sis_records;
 create policy "sis anon demo access" on sis_records
   for all to anon using (true) with check (true);
 
+-- Tabel cache API — dipakai juga untuk sinkronisasi pengaturan antar perangkat
+-- (source='sis_settings': URL + anon key + opsi kunci NASA)
+create table if not exists api_cache (
+  source text primary key,
+  payload jsonb not null default '{}'::jsonb,
+  fetched_at timestamptz not null default now()
+);
+alter table api_cache enable row level security;
+grant select, insert, update, delete on table api_cache to anon, authenticated;
+drop policy if exists "sis cache anon" on api_cache;
+create policy "sis cache anon" on api_cache
+  for all to anon using (true) with check (true);
+
 -- Verifikasi: harus muncul baris privileges untuk anon & authenticated
 select grantee, privilege_type from information_schema.role_table_grants
-where table_name='sis_records' order by grantee;`;
+where table_name in ('sis_records','api_cache') order by grantee, table_name;`;
 /* Uji koneksi NASA api_key — 1 request ke APOD; tampilkan VALID / INVALID / sisa kuota */
 async function testNasaKey(){
   const inp=$('#setNasa'); const key=(inp&&inp.value.trim())||(SET.nasaKey||'DEMO_KEY');
@@ -4922,12 +5005,16 @@ REG({
               <button class="btn primary" id="suConnect"><i data-lucide="plug-zap"></i> Connect / Test</button>
               <button class="btn" id="suPush"><i data-lucide="upload"></i> Push lokal → cloud</button>
               <button class="btn" id="suPull"><i data-lucide="download"></i> Pull cloud → lokal</button>
+              <button class="btn sm" id="suJoin"><i data-lucide="link"></i> Tautan gabung</button>
               <button class="btn sm" id="suSql"><i data-lucide="scroll-text"></i> Schema SQL</button>
             </div>
             <div class="set-row mt"><div class="info"><b>Auto-sync saat data berubah</b><span>Push otomatis setelah CRUD (perlu terhubung)</span></div>
               <label class="switch"><input type="checkbox" id="suAuto" ${COLL.supaCfg.auto?'checked':''}><i></i></label></div>
             <div class="set-row"><div class="info"><b>Proxy API via Edge Function</b><span>Route Horizons/ExoArchive/NeoWs lewat supabase/functions/nasa-proxy (deploy dulu — PANDUAN §5). Diperlukan untuk ExoArchive (IPAC tanpa header CORS).</span></div>
               <label class="switch"><input type="checkbox" id="suProxy" ${COLL.supaCfg.proxy?'checked':''}><i></i></label></div>
+            <div class="set-row"><div class="info"><b>Sertakan kunci NASA saat sinkron</b><span>Snapshot koneksi disimpan di tabel api_cache project Anda — perangkat lain yang Connect ke project yang sama otomatis menariknya. Catatan: siapa pun yang memegang URL + anon key dapat membaca isinya; pakai kunci berkuota terbatas bila disebar.</span></div>
+              <label class="switch"><input type="checkbox" id="suSyncKey" ${COLL.supaCfg.syncKey?'checked':''}><i></i></label></div>
+            <div class="note blue">Pindah perangkat: isi URL + anon key sekali lalu Connect (pengaturan & kunci NASA ditarik otomatis dari cloud), atau buka <b>Tautan gabung</b> di device baru — kredensial diterapkan otomatis.</div>
             <div id="suStatus" class="note" style="display:none"></div>
           </div></div>
         <div class="panel"><div class="panel-h"><h3><i data-lucide="activity"></i> System Activity Log</h3><div class="spacer"></div><button class="btn sm danger" id="logClear">Bersihkan</button></div>
@@ -5040,7 +5127,7 @@ REG({
       rd.readAsText(file);
     };
     $('#dmBackup').onclick=()=>{
-      const snap={version:'SIS v2.2.0',t:Date.now(),data:{}};
+      const snap={version:'SIS v2.2.1',t:Date.now(),data:{}};
       Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]);
       snap.data.settings=SET;
       download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json');
@@ -5075,12 +5162,12 @@ REG({
       }
     };
     $('#suConnect').onclick=async()=>{
-      COLL.supaCfg={url:$('#suUrl').value.trim(),key:$('#suKey').value.trim(),table:$('#suTable').value.trim()||'sis_records',auto:COLL.supaCfg.auto,proxy:COLL.supaCfg.proxy};
+      COLL.supaCfg={url:$('#suUrl').value.trim(),key:$('#suKey').value.trim(),table:$('#suTable').value.trim()||'sis_records',auto:$('#suAuto').checked,proxy:$('#suProxy').checked,syncKey:$('#suSyncKey').checked};
       persist('supaCfg');
       const st=$('#suStatus'); st.style.display=''; st.textContent='Menghubungkan…'; st.className='note blue';
       try{
         await supaConnect();
-        st.className='note ok'; st.textContent='Terhubung! Koneksi Supabase berfungsi. Status: LIVE.';
+        st.className='note ok'; st.textContent='Terhubung! Status LIVE — pengaturan koneksi'+(COLL.supaCfg.syncKey?' & kunci NASA':'')+' disinkronkan ke cloud. Perangkat lain tinggal Connect ke project yang sama.';
       }catch(err){
         SUPA.status='error'; markSource('supabase','Supabase Cloud Sync','UNAVAILABLE');
         st.className='note red'; st.textContent='Gagal: '+esc(err.message||err)+'. Periksa URL/key/tabel & RLS policy. Aplikasi tetap berjalan lokal.';
@@ -5099,6 +5186,22 @@ REG({
     };
     $('#suAuto').onchange=e=>{ COLL.supaCfg.auto=e.target.checked; persist('supaCfg'); if(COLL.supaCfg.auto&&!SUPA.client) toast('Auto-sync','Akan aktif setelah Connect berhasil.','info'); };
     $('#suProxy').onchange=e=>{ COLL.supaCfg.proxy=e.target.checked; persist('supaCfg'); toast('Proxy Edge','Horizons/ExoArchive akan dirutekan via nasa-proxy setelah deploy.','info'); };
+    $('#suSyncKey').onchange=e=>{ COLL.supaCfg.syncKey=e.target.checked; persist('supaCfg'); if(SUPA.client) supaSettingsPush(COLL.supaCfg.syncKey&&!!SET.nasaKey).then(ok=>{ if(ok) toast('Sinkron pengaturan','Snapshot di cloud diperbarui.','ok'); }); };
+    $('#suJoin').onclick=()=>{
+      if(!COLL.supaCfg.url||!COLL.supaCfg.key){
+        COLL.supaCfg=Object.assign({},COLL.supaCfg,{url:$('#suUrl').value.trim(),key:$('#suKey').value.trim(),table:$('#suTable').value.trim()||'sis_records',syncKey:$('#suSyncKey').checked});
+        persist('supaCfg');
+      }
+      if(!COLL.supaCfg.url||!COLL.supaCfg.key){ toast('Tautan gabung','Isi URL & anon key terlebih dahulu (atau tekan Connect).','warn'); return; }
+      const blob=JSON.stringify({u:COLL.supaCfg.url,k:COLL.supaCfg.key,t:COLL.supaCfg.table,sk:(COLL.supaCfg.syncKey&&SET.nasaKey)?SET.nasaKey:''});
+      const link=location.href.split('#')[0]+'#sisjoin='+encodeURIComponent(btoa(unescape(encodeURIComponent(blob))));
+      openModal({title:'Tautan Gabung — pindah perangkat',icon:'link',wide:true,
+        body:`<p style="line-height:1.7;font-size:.78rem">Buka tautan ini di browser/perangkat lain: SIS otomatis menerapkan koneksi Supabase${COLL.supaCfg.syncKey?', kunci NASA':''}, menyambung ke cloud, dan menarik data sinkron.</p>
+        <pre style="font-size:.62rem;background:rgba(3,7,18,.6);padding:12px;border-radius:10px;overflow-x:auto;color:#7dd3fc;word-break:break-all">${esc(link)}</pre>
+        <div class="note red"><b>Rahasia:</b> tautan memuat kredensial di dalamnya — hanya kirim ke perangkat Anda sendiri, jangan disebar publik.</div>`,
+        footer:'<button class="btn primary" data-copy>Salin tautan</button>',
+        bind(el){ el.querySelector('[data-copy]').onclick=()=>copyText(link); }});
+    };
     $('#suSql').onclick=()=>openModal({title:'Schema SQL Supabase',icon:'scroll-text',body:`<pre style="font-size:.7rem;background:rgba(3,7,18,.6);padding:14px;border-radius:10px;overflow-x:auto;color:#7dd3fc">${esc(SUPA_SQL)}</pre><div class="note blue">Buka Supabase → SQL Editor → jalankan script → gunakan Project URL & anon key dari Settings → API. RLS policy di atas hanya untuk demo.</div>`,footer:'<button class="btn primary" data-copy>Salin SQL</button>',bind(el,close){ el.querySelector('[data-copy]').onclick=()=>copyText(SUPA_SQL); }});
     refreshIcons(view);
   }
@@ -5163,7 +5266,7 @@ REG({
     </div>
     <div class="panel pad"><h3 style="font-family:var(--fontHead);font-size:.76rem;letter-spacing:.12em;color:#7dd3fc;margin-bottom:8px">INFORMASI VERSI</h3>
       <div class="tiles">
-        <div class="tile"><small>Versi</small><b>SIS v2.2.0 (build 2026.11)</b></div>
+        <div class="tile"><small>Versi</small><b>SIS v2.2.1 (build 2026.11)</b></div>
         <div class="tile"><small>Tagline</small><b>Beyond Earth, Beyond Intelligence</b></div>
         <div class="tile"><small>Arsitektur</small><b>Single-file HTML + LocalStorage + Supabase opsional</b></div>
         <div class="tile"><small>Library</small><b>Three.js r128 · Chart.js 4 · Lucide · satellite.js (opsional)</b></div>
@@ -5186,7 +5289,7 @@ REG({
     $('#setNotify').onchange=e=>{ SET.notify=e.target.checked; saveSet(); };
     $('#setSound').onchange=e=>{ SET.sound=e.target.checked; saveSet(); };
     $('#setPresent').onclick=()=>togglePresentation();
-    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.0',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
+    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.1',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
     $('#setRestore').onclick=()=>$('#setFile').click();
     $('#setFile').onchange=ev=>{
       const f=ev.target.files[0]; if(!f) return;
@@ -5485,6 +5588,22 @@ window.addEventListener('unhandledrejection',e=>{ console.error('SIS promise:',e
 /* ---- BOOT ---- */
 function boot(){
   if(window.__booted) return; window.__booted=true;
+  // Tautan gabung (#sisjoin=…) — terapkan kredensial dari tautan antar perangkat (v2.2.1)
+  try{
+    const jm=(location.hash||'').match(/sisjoin=([^&]+)/);
+    if(jm){
+      const j=JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(jm[1])))));
+      if(j&&j.u&&j.k){
+        COLL.supaCfg=Object.assign({},COLL.supaCfg||{},{url:j.u,key:j.k,table:j.t||'sis_records',auto:true});
+        if(j.sk) SET.nasaKey=j.sk;
+        persist('supaCfg'); saveSet();
+        history.replaceState(null,'',location.pathname+location.search);
+        setTimeout(()=>{ supaConnect()
+          .then(()=>{ toast('Tautan gabung','Koneksi Supabase & kunci diterapkan — tersambung ke cloud.','ok'); const pg=PAGES.find(p=>p.id==='data'); if(pg&&pg.reload) pg.reload(); })
+          .catch(err=>toast('Tautan gabung',err.message||String(err),'warn')); },900);
+      }
+    }
+  }catch(e){ /* hash bukan sisjoin — abaikan */ }
   // CSS tambahan (badge kosmik + color-scheme + presentation mode)
   document.head.insertAdjacentHTML('beforeend',`<style>
   .badge.b-cos{background:rgba(139,92,246,.13);color:#b39dff;border:1px solid rgba(139,92,246,.35)}
@@ -5516,8 +5635,8 @@ function boot(){
       .catch(err=>toast('Supabase gagal',(err.message||String(err))+' — berjalan lokal.','warn'));
   }
   // sambutan
-  setTimeout(()=>toast('SIS v2.1.0 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
-  logAct('system','SIS diinisialisasi (boot v2.1.0)');
+  setTimeout(()=>toast('SIS v2.2.1 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
+  logAct('system','SIS diinisialisasi (boot v2.2.1)');
 }
 document.addEventListener('DOMContentLoaded',boot);
 if(document.readyState!=='loading'&&!window.__booted){ window.__booted=true; boot(); }

@@ -41,7 +41,7 @@ Catatan akurasi Kepler: matematika tervalidasi — Bumi 25-11-2026: lon 62,85° 
 
 ## 4. Rute transport API (kenapa ada proxy)
 
-- **api.nasa.gov, SWPC (Kp/DSCOVR/GOES), WhereTheISS, LL2, CelesTrak, USGS** → CORS terbuka → langsung dari browser.
+- **api.nasa.gov, SWPC (Kp/DSCOVR/GOES + alert resmi `products/alerts.json`), WhereTheISS, LL2, CelesTrak, USGS** → CORS terbuka → langsung dari browser.
 - **EONET v3** → CORS terbuka, tetapi layanannya sendiri sering 500 → aplikasi otomatis memakai USGS sebagai sumber event nyata; EONET dipakai begitu pulih.
 - **Exoplanet Archive (IPAC)** → **tanpa header CORS** → langsung dari `file://` pasti diblokir
   → butuh **Edge Function `nasa-proxy`** (§5) atau server kecil milik Anda.
@@ -73,16 +73,38 @@ Prasyarat: Node 20+, CLI `supabase` (`npm i -g supabase`), login `supabase login
 5. **Cron cache** (opsional): SQL Editor → jalankan `supabase/cron.sql`
    (aktifkan pg_cron & pg_net dulu; ganti `<PROJECT_REF>`).
 
+## 5b. Pindah perangkat — kenapa kunci tidak "tersimpan" di GitHub
+
+Koneksi Supabase (URL + anon key) dan NASA api_key disimpan di **LocalStorage
+browser** — milik perangkat & browser itu saja. File `index.html` sengaja **tidak
+memuat kunci apa pun** supaya aman di-commit ke GitHub; GitHub hanya menyimpan
+kode, bukan pengaturan runtime. Dua cara membawa kredensial ke perangkat lain:
+
+1. **Otomatis via cloud (v2.2.0)** — saat Connect, aplikasi menyimpan snapshot
+   koneksi ke tabel `api_cache` project Supabase (`source='sis_settings'`) lalu
+   **menariknya kembali**: perangkat baru cukup isi URL + anon key yang sama →
+   Connect → pengaturan dan kunci NASA (bila switch **Sertakan kunci NASA**
+   aktif) langsung terisi tanpa diketik ulang.
+2. **Tautan gabung** — Data Management → Supabase Sync → **Tautan gabung** →
+   salin tautan, buka di browser/perangkat lain: kredensial diterapkan otomatis
+   + auto-connect + data sinkron ikut ditarik.
+
+Keamanan: anon key memang dirancang terbuka (asal RLS policy aktif), tetapi kunci
+NASA bersifat pribadi — matikan "Sertakan kunci NASA" bila project atau tautan
+bisa diakses orang lain; tautan gabung memuat kredensial di dalam hash URL.
+
 ## 6. Checklist verifikasi koneksi (2 menit)
 
 - [ ] Command Center → STATUS SUMBER DATA: minimal SWPC + WhereTheISS + LL2 **LIVE** (tanpa key).
 - [ ] Space Weather → badge **LIVE — NOAA SWPC DSCOVR/GOES**; angin ≈ 250–800 km/s (bukan angka acak).
+- [ ] Space Weather → panel **Alert Resmi NOAA SWPC (30 hari)**: badge LIVE + alert nyata (K04W/K05A/ALTXRM — WATCH/WARNING/ALERT geomagnetik & X-ray).
 - [ ] Earth Observation → badge **USGS: LIVE (±95 gempa)**; daftar "Event Geofisika Aktif" berisi gempa M4.5+ nyata.
 - [ ] Settings → Test kunci NASA → **VALID & AKTIF** (dengan kunci pribadi).
 - [ ] Solar System → badge **MODEL REAL / LIVE** + planet di posisi hari ini.
 - [ ] Deep Space → tabel probe: LIVE (Horizons) atau fallback berlabel SIMULATED.
 - [ ] Exoplanet → badge **LIVE DATA — NASA EA TAP** (butuh proxy) atau HISTORICAL.
 - [ ] Data Management → Connect/Test Supabase → "Terhubung!" (opsional).
+- [ ] Pindah perangkat: Connect di device baru → pengaturan & kunci NASA ditarik otomatis, atau via **Tautan gabung** (§5b).
 
 ## 7. Pemecahan masalah
 
@@ -97,6 +119,9 @@ Prasyarat: Node 20+, CLI `supabase` (`npm i -g supabase`), login `supabase login
 | Probe tetap SIMULATED | Horizons diblokir jaringan | Sama — lewat nasa-proxy |
 | Earth list tetap SIMULASI | EONET 500 **dan** USGS diblokir | Periksa akses earthquake.usgs.gov; proxy juga mendukungnya |
 | Weather badge SIMULATED | services.swpc.noaa.gov tidak terjangkau | Koneksi internet; tanpa proxy pun SWPC biasanya jalan |
+| Panel Alert Resmi kosong | `products/alerts.json` tidak terjangkau | Tombol Refresh; panel menampilkan catatan fallback berlabel jujur |
+| Kunci tidak muncul di device baru | LocalStorage = per-device | Connect ke project Supabase yang sama / pakai Tautan gabung (§5b) |
+| Push pengaturan gagal (`api_cache` tidak ada) | Project dibuat dengan SQL lama | Jalankan ulang `sis_supabase.sql` / tombol **Schema SQL** versi baru |
 | Chart kosong | CDN Chart.js offline | Koneksi internet; data tetap ada di tabel |
 
 ## 8. Batasan yang jujur di-deklarasikan UI

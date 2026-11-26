@@ -1,5 +1,5 @@
 -- =====================================================================
--- SPACE INTELLIGENCE SYSTEM (SIS) v2.1.0 — Supabase schema (FIXED)
+-- SPACE INTELLIGENCE SYSTEM (SIS) v2.2.0 — Supabase schema (FIXED)
 -- Jalankan SELURUH file ini di Supabase Dashboard → SQL Editor,
 -- pada project yang SAMA dengan URL yang diisi di aplikasi.
 -- Perbaikan: GRANT eksplisit untuk anon/authenticated — project baru
@@ -61,18 +61,27 @@ create trigger sis_records_touch
 --    (select/insert/update/delete). Kalau kosong → grants belum jalan.
 select grantee, privilege_type
 from information_schema.role_table_grants
-where table_name = 'sis_records'
-order by grantee;
+where table_name in ('sis_records','api_cache')
+order by grantee, table_name;
 
--- 7) (Opsional, pengembangan lanjutan) tabel cache API publik untuk
---    proxy/scheduler di sisi Supabase (Edge Function + pg_cron + pg_net).
+-- 7) Tabel cache API — WAJIB sejak v2.2.0: dipakai untuk sinkronisasi
+--    pengaturan antar perangkat (source='sis_settings' berisi URL + anon key
+--    + opsi kunci NASA) serta cache proxy/scheduler (Edge Function + pg_cron).
+create table if not exists api_cache (
+  source text primary key,
+  payload jsonb not null default '{}'::jsonb,
+  fetched_at timestamptz not null default now()
+);
+alter table api_cache enable row level security;
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on table api_cache to anon, authenticated;
+drop policy if exists "sis cache anon" on api_cache;
+create policy "sis cache anon" on api_cache
+  for all to anon using (true) with check (true);
+
+-- 8) (Opsional, pengembangan lanjutan) refresh cache periodik via pg_cron.
 --    Aktifkan extension di Dashboard → Database → Extensions:
 --      pg_cron, pg_net
--- create table if not exists api_cache (
---   source text primary key,
---   payload jsonb not null default '{}'::jsonb,
---   fetched_at timestamptz not null default now()
--- );
 -- select cron.schedule(
 --   'sis-swpc-kp', '*/2 * * * *',
 --   $$ select net.http_get('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json') $$
@@ -80,3 +89,5 @@ order by grantee;
 
 -- Selesai. Kembali ke aplikasi → Data Management → Supabase Sync
 -- → Connect / Test. Harus tampil "Terhubung" dan badge LIVE.
+-- Pindah perangkat: device lain cukup Connect ke project yang SAMA —
+-- snapshot koneksi di api_cache (sis_settings) ditarik otomatis (PANDUAN §5b).
