@@ -41,7 +41,10 @@ Catatan akurasi Kepler: matematika tervalidasi — Bumi 25-11-2026: lon 62,85° 
 
 ## 4. Rute transport API (kenapa ada proxy)
 
-- **api.nasa.gov, SWPC (Kp/DSCOVR/GOES + alert resmi `products/alerts.json`), WhereTheISS, LL2, CelesTrak, USGS** → CORS terbuka → langsung dari browser.
+- **api.nasa.gov, SWPC (Kp/DSCOVR/GOES + alert resmi `products/alerts.json`), WhereTheISS, LL2, USGS, Spaceflight News API (SNAPI v4)** → CORS terbuka → langsung dari browser.
+- **CelesTrak GP (TLE)** → CORS terbuka tetapi sering memblokir/melambatkan akses dari jaringan datacenter/VPN
+  → aplikasi mencoba langsung (15 s), lalu otomatis via `nasa-proxy` bila switch Proxy aktif; gagal keduanya =
+  badge SIMULATED untuk baris TLE (posisi ISS tetap nyata via WhereTheISS.at).
 - **EONET v3** → CORS terbuka, tetapi layanannya sendiri sering 500 → aplikasi otomatis memakai USGS sebagai sumber event nyata; EONET dipakai begitu pulih.
 - **Exoplanet Archive (IPAC)** → **tanpa header CORS** → langsung dari `file://` pasti diblokir
   → butuh **Edge Function `nasa-proxy`** (§5) atau server kecil milik Anda.
@@ -98,6 +101,8 @@ bisa diakses orang lain; tautan gabung memuat kredensial di dalam hash URL.
 - [ ] Command Center → STATUS SUMBER DATA: minimal SWPC + WhereTheISS + LL2 **LIVE** (tanpa key).
 - [ ] Space Weather → badge **LIVE — NOAA SWPC DSCOVR/GOES**; angin ≈ 250–800 km/s (bukan angka acak).
 - [ ] Space Weather → panel **Alert Resmi NOAA SWPC (30 hari)**: badge LIVE + alert nyata (K04W/K05A/ALTXRM — WATCH/WARNING/ALERT geomagnetik & X-ray).
+- [ ] Command Center → **Peringatan Terbaru**: baris dengan badge hijau `LIVE · NOAA SWPC`/`LIVE · USGS` (di atas riwayat demo).
+- [ ] Global Space Intelligence → **Space News Feed**: badge `LIVE · SNAPI` + artikel nyata (Spaceflight Now, NASA, dll.) dengan tautan artikel.
 - [ ] Earth Observation → badge **USGS: LIVE (±95 gempa)**; daftar "Event Geofisika Aktif" berisi gempa M4.5+ nyata.
 - [ ] Settings → Test kunci NASA → **VALID & AKTIF** (dengan kunci pribadi).
 - [ ] Solar System → badge **MODEL REAL / LIVE** + planet di posisi hari ini.
@@ -120,6 +125,9 @@ bisa diakses orang lain; tautan gabung memuat kredensial di dalam hash URL.
 | Earth list tetap SIMULASI | EONET 500 **dan** USGS diblokir | Periksa akses earthquake.usgs.gov; proxy juga mendukungnya |
 | Weather badge SIMULATED | services.swpc.noaa.gov tidak terjangkau | Koneksi internet; tanpa proxy pun SWPC biasanya jalan |
 | Panel Alert Resmi kosong | `products/alerts.json` tidak terjangkau | Tombol Refresh; panel menampilkan catatan fallback berlabel jujur |
+| CelesTrak GP tetap SIMULATED | celestrak.org memblokir/melambatkan jaringan Anda | Deploy nasa-proxy + nyalakan switch Proxy (§5); ISS tetap LIVE via WhereTheISS.at |
+| Space News Feed tanpa artikel LIVE | api.spaceflightnewsapi.net tidak terjangkau | Feed seed demo tetap tampil berlabel SIMULASI; coba Refresh |
+| Horizons/Probe tetap SIMULATED | ssd-api.jpl.nasa.gov diblokir jaringan | Sama — lewat nasa-proxy (§5) |
 | Kunci tidak muncul di device baru | LocalStorage = per-device | Connect ke project Supabase yang sama / pakai Tautan gabung (§5b) |
 | Push pengaturan gagal (`api_cache` tidak ada) | Project dibuat dengan SQL lama | Jalankan ulang `sis_supabase.sql` / tombol **Schema SQL** versi baru |
 | Chart kosong | CDN Chart.js offline | Koneksi internet; data tetap ada di tabel |

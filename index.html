@@ -1360,6 +1360,35 @@ async function refreshSWPCAlerts(){
   return ok;
 }
 
+/* ---------- Peringatan nyata gabungan (turunan feed LIVE — tanpa request baru) ----------
+   Menggabungkan alert resmi NOAA SWPC (STATE.swpcAlerts) + gempa M≥6 USGS
+   (STATE.usgsEvs) untuk panel "Peringatan Terbaru" & "Kotak Peringatan". */
+function realAlerts(){
+  const out=[];
+  ((STATE.swpcAlerts||{}).list||[]).slice(0,6).forEach(a=>{
+    const m=String(a.msg||'').toUpperCase();
+    out.push({title:'NOAA SWPC '+a.pid+(a.sub?' — '+a.sub:''),msg:a.msg,ts:a.t,
+      prio:/K-INDEX OF [5-9]|X-RAY EVENT EXCEEDED X|PROTON|S[3-5]|R[3-5]|EXTREME/.test(m)?'High':
+        /ALERT|WARNING|WATCH|SUMMARY/.test(m)?'Medium':'Low',sim:false,src:'NOAA SWPC'});
+  });
+  (STATE.usgsEvs||[]).forEach(e=>{
+    const mg=parseFloat(String(e.n||'').match(/^M(\d+\.?\d*)/)||[0,0]);
+    if(mg>=6.0) out.push({title:'Gempa '+e.n,msg:e.note+' Data USGS real-time (M≥6, 7 hari terakhir).',ts:Date.now(),prio:mg>=6.5?'High':'Medium',sim:false,src:'USGS'});
+  });
+  return out.sort((a,b)=>b.ts-a.ts);
+}
+
+/* ---------- Spaceflight News API v4 — berita antariksa nyata (CORS terbuka) ---------- */
+async function refreshSFN(){
+  const r=await fetchJSON('https://api.spaceflightnewsapi.net/v4/articles/?limit=12',{cacheKey:'sfn',timeout:12000});
+  const ok=r.ok&&r.data&&Array.isArray(r.data.results);
+  STATE.sfn=ok?{st:r.live?'LIVE':'CACHED',list:r.data.results.map(a=>({t:String(a.title||'—'),sum:String(a.summary||'').slice(0,200),org:String(a.news_site||'SN'),date:String(a.published_at||'').slice(0,10),url:String(a.url||'#')}))}:null;
+  markSource('sfn','Spaceflight News API (SNAPI v4)',ok?(r.live?'LIVE':'CACHED'):'UNAVAILABLE','https://api.spaceflightnewsapi.net/v4/articles/');
+  if(ok&&STATE.sfn.list.length) logAct('sfn','Berita antariksa nyata: '+STATE.sfn.list.length+' artikel (Spaceflight News API)');
+  if(ok&&STATE.page==='global'){ const pg=PAGES.find(p=>p.id==='global'); if(pg&&pg.reload) pg.reload(); }
+  return ok;
+}
+
 /* ---------- Event geofisika Bumi: NASA EONET + USGS gempa (nyata) ----------
    EONET v3 sering 500 server-side → gempa M4.5+ 7 hari dari USGS GeoJSON
    (terverifikasi 200 + CORS terbuka, ±95 event/minggu) sebagai sumber LIVE utama. */
@@ -2392,9 +2421,15 @@ REG({
       onEarth:(lat,lon)=>toast('Koordinat dipilih',`Lat ${lat.toFixed(2)}° · Lon ${lon.toFixed(2)}° — wilayah ${lat>0?'Borealis':lat<-60?'Antartika':'Zona tropis/temperat'}. (representasi visual)`,'info')
     }));
     // alerts list
-    $('#ccAlerts').innerHTML=(COLL.alerts||ALERTS_SEED).slice(0,5).map(a=>`
+    const ra=realAlerts();
+    $('#ccAlerts').innerHTML=[
+      ...ra.map(a=>`
+      <div class="list-row"><i data-lucide="siren" style="color:${a.prio==='High'?'var(--danger)':'var(--warn)'}"></i>
+      <div class="body"><b>${esc(a.title)}</b><p>${esc(a.msg)}</p><div class="meta"><span>${timeAgo(a.ts)}</span><span class="badge b-live">LIVE · ${esc(a.src)}</span></div></div></div>`),
+      ...(COLL.alerts||ALERTS_SEED).slice(0,Math.max(0,6-ra.length)).map(a=>`
       <div class="list-row"><i data-lucide="${a.prio==='High'?'octagon-alert':'bell'}" style="color:${a.prio==='High'?'var(--danger)':a.prio==='Medium'?'var(--warn)':'var(--dim)'}"></i>
-      <div class="body"><b>${esc(a.title)}</b><p>${esc(a.msg)}</p><div class="meta"><span>${timeAgo(a.ts)}</span>${a.sim?'<span class="badge b-sim">SIMULASI</span>':''}</div></div></div>`).join('');
+      <div class="body"><b>${esc(a.title)}</b><p>${esc(a.msg)}</p><div class="meta"><span>${timeAgo(a.ts)}</span>${a.sim?'<span class="badge b-sim">SIMULASI</span>':''}</div></div></div>`)
+    ].join('')+(ra.length?`<div class="note ok" style="margin-top:8px">${ra.length} peringatan nyata digabung dari feed LIVE NOAA SWPC & USGS.</div>`:'');
     // sources
     renderSourcesPanel();
     // timeline
@@ -2464,7 +2499,7 @@ REG({
 let _liveTried=false;
 async function loadLiveData(force){
   markSource('swpc','NOAA SWPC — Kp Index','SIMULATED','https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json');
-  markSource('celestrak','CelesTrak GP (TLE)','SIMULATED','https://celestrak.org/NORAD/elements/gp.php');
+  markSource('celesTrak','CelesTrak GP (TLE)','SIMULATED','https://celestrak.org/NORAD/elements/gp.php');
   markSource('nasaNeo','NASA NeoWs','SIMULATED','https://api.nasa.gov/neo/rest/v1/feed');
   markSource('ll2','Launch Library 2','SIMULATED','https://ll.thespacedevs.com/2.2.0/launch/upcoming/');
   markSource('horizons','JPL Horizons — vektor heliosentris','SIMULATED','https://ssd-api.jpl.nasa.gov/horizons.api');
@@ -2480,10 +2515,13 @@ async function loadLiveData(force){
     .then(r=>{ markSource('nasaNeo','NASA NeoWs',r.ok?(r.live?'LIVE':'CACHED'):'SIMULATED','https://api.nasa.gov/neo/rest/v1/feed'); STATE.neoLive=r.ok?r.data:null; });
   fetchJSON('https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=8',{cacheKey:'ll2_up'})
     .then(r=>{ markSource('ll2','Launch Library 2',r.ok?(r.live?'LIVE':'CACHED'):'SIMULATED','https://ll.thespacedevs.com/2.2.0/launch/upcoming/'); STATE.ll2=r.ok?r.data:null; });
-  fetchJSON('https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json',{cacheKey:'celes_stations'})
-    .then(r=>{ markSource('celesTrak','CelesTrak GP (TLE)',r.ok?(r.live?'LIVE':'CACHED'):'SIMULATED','https://celestrak.org/NORAD/elements/gp.php'); if(r.ok){ STATE.celestrak=r.data; if(applyTLE(r.data)) logAct('sgp4','TLE CelesTrak termuat — propagasi SGP4 aktif'); } });
+  fetchJSON('https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json',{cacheKey:'celes_stations',timeout:15000})
+    .then(async r=>{
+      // CelesTrak sering memblokir/lambat dari jaringan datacenter → coba nasa-proxy bila aktif
+      if(!r.ok){ const pu=supaProxyURL('https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json'); if(pu) r=await fetchJSON(pu,{cacheKey:'celes_stationsp',timeout:15000}); }
+      markSource('celesTrak','CelesTrak GP (TLE)',r.ok?(r.live?'LIVE':'CACHED'):'SIMULATED','https://celestrak.org/NORAD/elements/gp.php'); if(r.ok){ STATE.celestrak=r.data; if(applyTLE(r.data)) logAct('sgp4','TLE CelesTrak termuat — propagasi SGP4 aktif'); } });
   fetchISSNow();
-  fetchHorizons(); fetchProbes(); fetchExoLive(); fetchSpaceWeather(); fetchEarthEvents(); // engine realtime (04b)
+  fetchHorizons(); fetchProbes(); fetchExoLive(); fetchSpaceWeather(); fetchEarthEvents(); refreshSFN(); // engine realtime (04b)
 }
 /* ================================================================
    MODUL 2 — SOLAR SYSTEM EXPLORER  |  MODUL 3 — EARTH OBSERVATION
@@ -4117,7 +4155,7 @@ REG({
             <div class="list-row"><i data-lucide="rocket-taking-off" style="color:${i===0?'var(--danger)':'var(--dim)'}"></i>
             <div class="body"><b>${pick(['Rocket body (simulasi)','Defunct sat (simulasi)','Debris cluster (simulasi)'])} #${randInt(20000,50000)}</b>
             <p>Reentry forecast demo: ${fmtDate(Date.now()+rand(1,30)*864e5)} ± ${randInt(6,30)} jam ·lok ${pick(['Samudra Pasifik','Samudra Hindia','Afrika selatan','Laut Filipina'])}</p>
-            <div class="meta"><span class="badge b-sim">SIMULASI</span></div></div></div>`).join('')}</div></div>
+            <div class="meta"><span class="badge b-sim">SIMULASI</span></div></div></div>`).join('')}<div class="note">Prakiraan reentry real-time resmi tersedia di Aerospace Corp (aerospace.org/reentry) &amp; Space-Track TIP (perlu login) — tidak ada API publik tanpa kunci, sehingga panel ini tetap demo edukatif berlabel jujur.</div></div></div>
       </div>
     </div>
     <div class="grid g2 mb">
@@ -4619,7 +4657,7 @@ REG({
     view.innerHTML=`
     <div class="page-head">
       <div><h1><i data-lucide="globe-lock"></i> ${esc(L(this.name))}</h1><p>${esc(L(this.sub))}</p></div>
-      <div class="page-actions"><span class="badge b-sim">RINGKASAN = SIMULASI · tautan = portal resmi</span></div>
+      <div class="page-actions"><span class="badge ${STATE.sfn?'b-live':'b-sim'}">${STATE.sfn?'LIVE NEWS — Spaceflight News API':'RINGKASAN = SIMULASI · tautan = portal resmi'}</span></div>
     </div>
     <div class="panel mb"><div class="panel-h"><h3><i data-lucide="building-2"></i> Organisasi & Agensi</h3></div>
       <div class="panel-b"><div class="grid g4">
@@ -4639,16 +4677,23 @@ REG({
     <div class="panel"><div class="panel-h"><h3><i data-lucide="shield-check"></i> Data Source Verification</h3></div>
       <div class="panel-b" id="globVerify"></div></div>`;
     const drawNews=()=>{
+      const q=String(GLOB_FILTER.q||'').toLowerCase();
+      const ra=((STATE.sfn||{}).list||[]).filter(n=>!q||n.t.toLowerCase().includes(q)||n.sum.toLowerCase().includes(q));
       let list=NEWS_SEED.filter(n=>
         (GLOB_FILTER.org==='all'||n.org===GLOB_FILTER.org)&&
         (GLOB_FILTER.cat==='all'||n.cat===GLOB_FILTER.cat)&&
         (GLOB_FILTER.q===''||n.t.toLowerCase().includes(GLOB_FILTER.q)||n.sum.toLowerCase().includes(GLOB_FILTER.q)));
-      $('#globNews').innerHTML=list.length?list.map(n=>`
+      $('#globNews').innerHTML=(ra.length?ra.map(n=>`
+        <div class="list-row"><i data-lucide="satellite-dish" style="color:var(--ok)"></i>
+        <div class="body"><b>${esc(n.t)}</b><p>${esc(n.sum)}</p>
+        <div class="meta"><span class="badge b-live">${esc(STATE.sfn.st)} · SNAPI</span><span>${esc(n.org)}</span><span>${esc(n.date)}</span>
+        <a href="${esc(n.url)}" target="_blank" rel="noopener">Baca artikel ↗</a></div></div></div>`).join(''):'')+
+        (list.length?list.map(n=>`
         <div class="list-row"><i data-lucide="newspaper" style="color:var(--neon)"></i>
         <div class="body"><b>${esc(n.t)}</b><p>${esc(n.sum)}</p>
         <div class="meta"><span class="badge b-sim">SIMULASI</span><span>${esc(n.org)}</span><span>${esc(n.cat)}</span><span>${esc(n.date)}</span>
         <a href="${esc(n.url)}" target="_blank" rel="noopener">Artikel/sumber ↗ (${esc(n.src)})</a></div></div></div>`).join('')
-        :'<div class="empty">Tidak ada item yang cocok.</div>';
+        :(ra.length?'':'<div class="empty">Tidak ada item yang cocok.</div>'));
       refreshIcons($('#globNews'));
     };
     drawNews();
@@ -4840,14 +4885,19 @@ REG({
     const drawList=()=>{
       const cat=$('#alCatF').value,prio=$('#alPrioF').value,un=$('#alUnread').classList.contains('active');
       let list=COLL.alerts.filter(a=>(cat==='all'||a.cat===cat)&&(prio==='all'||a.prio===prio)&&(!un||!a.read));
-      $('#alList').innerHTML=list.length?list.map(a=>`
+      const ra=realAlerts().filter(a=>prio==='all'||a.prio===prio);
+      $('#alList').innerHTML=(ra.length?`<div class="note ok" style="margin-bottom:8px"><b>${ra.length} peringatan NYATA</b> digabung dari feed LIVE NOAA SWPC & USGS — di atas riwayat lokal berlabel SIMULASI.</div>`+ra.map(a=>`
+        <div class="list-row"><i data-lucide="siren" style="color:${a.prio==='High'?'var(--danger)':'var(--warn)'}"></i>
+        <div class="body"><b>${esc(a.title)}</b><p>${esc(a.msg)}</p>
+        <div class="meta"><span class="badge b-live">LIVE · ${esc(a.src)}</span><span>${fmtDate(a.ts)}</span></div></div></div>`).join(''):'')+
+        (list.length?list.map(a=>`
         <div class="list-row" style="opacity:${a.read?.55:1}">
           <i data-lucide="${a.prio==='High'?'octagon-alert':a.prio==='Medium'?'triangle-alert':'info'}" style="color:${a.prio==='High'?'var(--danger)':a.prio==='Medium'?'var(--warn)':'var(--dim)'}"></i>
           <div class="body"><b>${esc(a.title)} ${!a.read?'<span class="dot d-warn" style="display:inline-block"></span>':''}</b><p>${esc(a.msg)}</p>
           <div class="meta"><span class="badge b-hist">${esc(a.cat)}</span><span class="badge ${a.prio==='High'?'b-off':a.prio==='Medium'?'b-sim':'b-gray'}">${esc(a.prio)}</span>
           <span>${fmtDate(a.ts)}</span>${a.sim?'<span class="badge b-sim">SIMULASI</span>':''}
           ${!a.read?`<button class="btn sm" data-read="${a.id}">Mark as read</button>`:''}</div></div></div>`).join('')
-        :'<div class="empty">Tidak ada alert sesuai filter.</div>';
+        :'<div class="empty">Tidak ada alert sesuai filter.</div>');
       $$('#alList [data-read]').forEach(b=>b.onclick=()=>{ const a=COLL.alerts.find(x=>x.id===b.dataset.read); a.read=true; persist('alerts'); refreshAlertBadges(); drawList(); });
       refreshIcons($('#alList'));
     };
