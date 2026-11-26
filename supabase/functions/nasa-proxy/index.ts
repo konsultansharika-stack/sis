@@ -10,6 +10,7 @@
 const ALLOW = new Set([
   'api.nasa.gov',
   'ssd-api.jpl.nasa.gov',
+  'ssd.jpl.nasa.gov', // v2.2.5: Horizons API pindah ke host/path ini
   'exoplanetarchive.ipac.caltech.edu',
   'services.swpc.noaa.gov',
   'eonet.gsfc.nasa.gov',

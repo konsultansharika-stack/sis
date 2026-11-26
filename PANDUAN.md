@@ -62,7 +62,7 @@ Prasyarat: Node 20+, CLI `supabase` (`npm i -g supabase`), login `supabase login
 2. **Sync di aplikasi**: Data Management → Supabase Sync → isi URL + anon key → Connect/Test.
    Ada error `permission denied`? Jalankan blok GRANT (tombol **Schema SQL** di aplikasi
    memuat versi terbaru).
-3. **Edge Functions**:
+3. **Edge Functions** (wajib redeploy bila Anda pernah deploy versi lama — v2.2.5 menambah `ssd.jpl.nasa.gov` ke allowlist nasa-proxy):
    ```bash
    mkdir -p sis/supabase/functions && cd sis
    # salin folder supabase/functions/{nasa-proxy,refresh-cache} + config.toml dari paket ini
@@ -70,6 +70,7 @@ Prasyarat: Node 20+, CLI `supabase` (`npm i -g supabase`), login `supabase login
    supabase functions deploy refresh-cache
    supabase secrets set NASA_API_KEY=kunci_nasa_anda
    ```
+   Penting: jalankan `supabase functions deploy` dari folder yang memuat `supabase/config.toml` (agar `verify_jwt=false` ikut). Verifikasi hasilnya dengan tombol **Test proxy** di Data Management.
 4. **Aktifkan proxy di aplikasi**: System Settings/Data Management → Supabase Sync →
    nyalakan **Proxy API via Edge Function**. Sekarang ExoArchive & Horizons dirutekan
    lewat `<project>/functions/v1/nasa-proxy?p=<url>`.
@@ -127,7 +128,8 @@ bisa diakses orang lain; tautan gabung memuat kredensial di dalam hash URL.
 | Panel Alert Resmi kosong | `products/alerts.json` tidak terjangkau | Tombol Refresh; panel menampilkan catatan fallback berlabel jujur |
 | CelesTrak GP tetap SIMULATED | celestrak.org memblokir/melambatkan jaringan Anda | Deploy nasa-proxy + nyalakan switch Proxy (§5); ISS tetap LIVE via WhereTheISS.at |
 | Space News Feed tanpa artikel LIVE | api.spaceflightnewsapi.net tidak terjangkau | Feed seed demo tetap tampil berlabel SIMULASI; coba Refresh |
-| Horizons/Probe tetap SIMULATED | ssd-api.jpl.nasa.gov diblokir jaringan | Sama — lewat nasa-proxy (§5) |
+| Horizons/Probe tetap SIMULATED | **v2.2.4- ke bawah: endpoint lama sudah mati** — JPL memindahkan Horizons API ke `ssd.jpl.nasa.gov/api/horizons.api`; host lama `ssd-api.jpl.nasa.gov/horizons.api` kini menjawab 404 nginx (diverifikasi: API lain di host lama tetap hidup). Ditambah parser lama salah baca format | **v2.2.5 memakai endpoint baru** + parser blok X/Y/Z + VX/VY/VZ (format resmi, terverifikasi). Horizons kini bisa LIVE langsung (bila CORS host baru terbuka) atau via proxy — **redeploy `nasa-proxy` wajib** agar host baru masuk allowlist |
+| Proxy aktif tapi tetap SIMULATED | ① function di-deploy tanpa `config.toml` → `verify_jwt=true` → **401 Invalid JWT**; ② v2.2.2- ke bawah: fetcher tidak diulang karena guard TTL; ③ v2.2.3- ke bawah: parser salah baca format; ④ function lama tidak mengenal host baru `ssd.jpl.nasa.gov` (allowlist lama) | **v2.2.5**: parser diperbaiki + `apikey` otomatis + force diteruskan + **allowlist proxy ditambah `ssd.jpl.nasa.gov`** → **redeploy function dari folder yang memuat `supabase/config.toml`**, lalu tombol **Test proxy** di Data Management untuk verifikasi end-to-end; catatan `Percobaan terakhir:` di Deep Space menampilkan penyebab persisnya |
 | Kunci tidak muncul di device baru | LocalStorage = per-device | Connect ke project Supabase yang sama / pakai Tautan gabung (§5b) |
 | Push pengaturan gagal (`api_cache` tidak ada) | Project dibuat dengan SQL lama | Jalankan ulang `sis_supabase.sql` / tombol **Schema SQL** versi baru |
 | Chart kosong | CDN Chart.js offline | Koneksi internet; data tetap ada di tabel |

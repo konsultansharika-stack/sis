@@ -483,7 +483,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <nav id="nav"></nav>
     <div class="side-foot">
       <div class="dotrow"><span class="dot d-ok"></span><span id="sideSys">SYSTEM NOMINAL</span></div>
-      <div class="mini">v2.2.4 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
+      <div class="mini">v2.2.5 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
     </div>
   </aside>
 
@@ -515,7 +515,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <main id="view"></main>
 
     <div class="footer-bar">
-      <span><b style="color:var(--neon)">SIS v2.2.4</b></span><span class="sep"></span>
+      <span><b style="color:var(--neon)">SIS v2.2.5</b></span><span class="sep"></span>
       <span id="footSources">Data sources: —</span><span class="sep"></span>
       <span id="footUpd">Last sync: —</span><span class="sep"></span>
       <div class="ticker"><span id="footTicker">MENYIAPKAN SISTEM…</span></div>
@@ -532,7 +532,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
 <script>
 'use strict';
 /* ================================================================
-   SPACE INTELLIGENCE SYSTEM (SIS) v2.2.4 — Single-file application
+   SPACE INTELLIGENCE SYSTEM (SIS) v2.2.5 — Single-file application
    All modules, demo data, 3D, charts, storage & optional Supabase sync.
    ================================================================ */
 
@@ -856,7 +856,7 @@ async function supaConnect(){
   SUPA.status='connected'; SUPA.lastError='';
   markSource('supabase','Supabase Cloud Sync','LIVE',cfg.url);
   logAct('supabase','Terhubung ke Supabase: '+cfg.url);
-  // sinkronisasi pengaturan antar perangkat (v2.2.4): tarik snapshot koneksi/kunci, lalu kirim versi lokal
+  // sinkronisasi pengaturan antar perangkat (v2.2.5): tarik snapshot koneksi/kunci, lalu kirim versi lokal
   try{
     const got=await supaSettingsPull();
     if(got) logAct('supabase','Pengaturan koneksi/kunci NASA ditarik dari cloud (antar perangkat).');
@@ -896,13 +896,13 @@ async function supaPull(){
   return n;
 }
 
-/* ---------------- Sinkronisasi pengaturan antar perangkat (v2.2.4) ----------------
+/* ---------------- Sinkronisasi pengaturan antar perangkat (v2.2.5) ----------------
    Kredensial (URL + anon key + opsi kunci NASA) hidup di localStorage = per-device.
    Snapshot disimpan ke tabel api_cache (source='sis_settings') di project Supabase,
    sehingga perangkat lain yang Connect ke project yang SAMA otomatis menariknya. */
 function supaSettingsPayload(includeKey){
   return {supaCfg:{url:COLL.supaCfg.url,key:COLL.supaCfg.key,table:COLL.supaCfg.table,auto:COLL.supaCfg.auto,proxy:COLL.supaCfg.proxy,syncKey:!!includeKey},
-    nasaKey:includeKey?(SET.nasaKey||''):'', ver:'v2.2.4', ts:new Date().toISOString()};
+    nasaKey:includeKey?(SET.nasaKey||''):'', ver:'v2.2.5', ts:new Date().toISOString()};
 }
 async function supaSettingsPush(includeKey){
   if(!SUPA.client||!COLL.supaCfg.url) return false;
@@ -1085,10 +1085,14 @@ function helioKepler(id,jd){
 /* ---------- Lapisan JPL Horizons (opsional; LIVE bila terjangkau) ---------- */
 const HORIZ={ids:{mercury:199,venus:299,earth:399,mars:499,jupiter:599,saturn:699,uranus:799,neptune:899,pluto:999},vec:{},n:0,ts:0,probeN:0,probeTs:0};
 function horizonsURL(naif){
+  // v2.2.5: JPL memindahkan Horizons API — host lama ssd-api.jpl.nasa.gov/horizons.api
+  // kini 404 nginx (diverifikasi; cad.api/sbdb.api di host itu tetap hidup). Endpoint
+  // resmi sekarang: https://ssd.jpl.nasa.gov/api/horizons.api (terverifikasi via crawl
+  // balasan "API VERSION: 1.2"). @ di CENTER di-encode %40 sesuai contoh resmi.
   const t0=new Date(Date.now()-12*36e5).toISOString().slice(0,16).replace('T',' ');
   const t1=new Date(Date.now()+12*36e5).toISOString().slice(0,16).replace('T',' ');
-  return 'https://ssd-api.jpl.nasa.gov/horizons.api?format=json&EPHEM_TYPE=VECTORS&COMMAND=%27'+naif+
-    '%27&CENTER=%27500@10%27&START_TIME='+encodeURIComponent(t0)+'&STOP_TIME='+encodeURIComponent(t1)+
+  return 'https://ssd.jpl.nasa.gov/api/horizons.api?format=json&EPHEM_TYPE=VECTORS&MAKE_EPHEM=YES&COMMAND=%27'+naif+
+    '%27&CENTER=%27500%4010%27&START_TIME='+encodeURIComponent(t0)+'&STOP_TIME='+encodeURIComponent(t1)+
     '&STEP_SIZE=%271h%27&QUANTITIES=%271,2%27&REF_PLANE=ECLIPTIC&OUT_UNITS=%27AU-D%27';
 }
 function parseHorizonsVectors(json){
@@ -1101,7 +1105,7 @@ function parseHorizonsVectors(json){
     // lalu "X = … Y = … Z = …" dan "VX=… VY=… VZ=…" — bisa terpisah 3 baris
     // atau digabung 1 baris. Parser lama hanya membaca baris pertama (JD) yang
     // tak pernah berisi 10 angka vektor → selalu null → Horizons tak pernah LIVE.
-    // v2.2.4: pindai seluruh blok dengan regex per komponen.
+    // v2.2.5: pindai seluruh blok dengan regex per komponen.
     const N='([+-]?[0-9]+(?:\\.[0-9]+)?(?:[Ee][+-]?[0-9]+)?)';
     let jd=null,x=null,y=null,z=null,vx=null,vy=null,vz=null;
     const lines=block.split('\n');
@@ -1289,18 +1293,21 @@ async function fetchSpaceWeather(force){
       kpN=kpRows.filter(x=>x&&Array.isArray(x)&&isFinite(parseFloat(x[1]))).map(x=>({t:x[0],v:parseFloat(x[1])}));
   }catch(e){}
   const kp=(kpN&&kpN.length)?kpN[kpN.length-1].v:null;
-  // 2) DSCOVR realtime (ringkasan terkini)
-  const [rW,rM,rF]=await Promise.all([
+  // 2) DSCOVR realtime (ringkasan terkini) + GOES X-ray 24 jam — semuanya
+  //    paralel (rX dulu berurutan setelah ringkasan → rawan timeout total;
+  //    xrays-1-day.json ±650 KB → timeout diberi 20 dtk)
+  const [rW,rM,rF,rX]=await Promise.all([
     F('https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json','sw_wind'),
     F('https://services.swpc.noaa.gov/products/summary/solar-wind-mag-field.json','sw_mag'),
-    F('https://services.swpc.noaa.gov/products/summary/10cm-flux.json','sw_f107')]);
+    F('https://services.swpc.noaa.gov/products/summary/10cm-flux.json','sw_f107'),
+    F('https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json','sw_xray',20000)]);
   const jw=last(rW.ok?rW.data:null), jm=last(rM.ok?rM.data:null), jf=last(rF.ok?rF.data:null);
   const windV=jw&&isFinite(parseFloat(jw.proton_speed))?parseFloat(jw.proton_speed):null;
   const btV=jm&&isFinite(parseFloat(jm.bt))?parseFloat(jm.bt):null;
   const bzV=jm&&isFinite(parseFloat(jm.bz_gsm))?parseFloat(jm.bz_gsm):null;
   const f107V=jf&&isFinite(parseFloat(jf.flux))?parseFloat(jf.flux):null;
-  // 3) GOES X-ray 24 jam → kelas flare maksimum (nyata)
-  const rX=await F('https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json','sw_xray',12000);
+  // 3) GOES X-ray 24 jam → kelas flare maksimum (nyata) — rX sudah diambil
+  //    di Promise.all di atas (paralel dengan ringkasan DSCOVR)
   let flareCls=null;
   if(rX.ok&&Array.isArray(rX.data)){
     const fl=rX.data.filter(x=>x&&x.energy==='0.1-0.8nm'&&typeof x.observed_flux==='number').map(x=>x.observed_flux);
@@ -3527,7 +3534,7 @@ REG({
       if(b){ const live=HORIZ.probeN>0; b.className='badge '+(live?'b-live':'b-hist');
         b.textContent=live?('Posisi nyata '+HORIZ.probeN+'/'+PROBES.length+' probe'):'Fallback model (Horizons tak terjangkau)'; }
       const nt=$('#probeNote');
-      if(nt) nt.innerHTML=HORIZ.probeN>0?'Delay one-way = waktu tempuh sinyal radio Bumi→probe (c = 499,005 s/AU). Vektor posisi langsung dari <b>JPL Horizons</b>.':'JPL Horizons tidak terjangkau langsung (offline/CORS). Jarak fallback = model estimasi berlabel SIMULATED. Langkah LIVE: ① deploy <b>nasa-proxy</b> (PANDUAN §5) ② switch <b>Proxy API</b> di Data Management + tombol <b>Test proxy</b> untuk cek jalur end-to-end ③ bila tetap gagal, redeploy function dari folder yang memuat <b>config.toml</b> (verify_jwt=false) — v2.2.4 kirim apikey otomatis. Percobaan terakhir: <b>'+(HORIZ.lastErr?esc(HORIZ.lastErr):'tidak tercatat')+'</b>.';
+      if(nt) nt.innerHTML=HORIZ.probeN>0?'Delay one-way = waktu tempuh sinyal radio Bumi→probe (c = 499,005 s/AU). Vektor posisi langsung dari <b>JPL Horizons</b>.':'JPL Horizons tidak terjangkau langsung (offline/CORS). Jarak fallback = model estimasi berlabel SIMULATED. Langkah LIVE: ① deploy <b>nasa-proxy</b> (PANDUAN §5) ② switch <b>Proxy API</b> di Data Management + tombol <b>Test proxy</b> untuk cek jalur end-to-end ③ bila tetap gagal, redeploy function dari folder yang memuat <b>config.toml</b> (verify_jwt=false) — v2.2.5 kirim apikey otomatis. Percobaan terakhir: <b>'+(HORIZ.lastErr?esc(HORIZ.lastErr):'tidak tercatat')+'</b>.';
     };
     renderProbeRows();
     fetchProbes().then(renderProbeRows).catch(()=>{});
@@ -5203,7 +5210,7 @@ REG({
       rd.readAsText(file);
     };
     $('#dmBackup').onclick=()=>{
-      const snap={version:'SIS v2.2.4',t:Date.now(),data:{}};
+      const snap={version:'SIS v2.2.5',t:Date.now(),data:{}};
       Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]);
       snap.data.settings=SET;
       download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json');
@@ -5354,7 +5361,7 @@ REG({
     </div>
     <div class="panel pad"><h3 style="font-family:var(--fontHead);font-size:.76rem;letter-spacing:.12em;color:#7dd3fc;margin-bottom:8px">INFORMASI VERSI</h3>
       <div class="tiles">
-        <div class="tile"><small>Versi</small><b>SIS v2.2.4 (build 2026.11)</b></div>
+        <div class="tile"><small>Versi</small><b>SIS v2.2.5 (build 2026.11)</b></div>
         <div class="tile"><small>Tagline</small><b>Beyond Earth, Beyond Intelligence</b></div>
         <div class="tile"><small>Arsitektur</small><b>Single-file HTML + LocalStorage + Supabase opsional</b></div>
         <div class="tile"><small>Library</small><b>Three.js r128 · Chart.js 4 · Lucide · satellite.js (opsional)</b></div>
@@ -5377,7 +5384,7 @@ REG({
     $('#setNotify').onchange=e=>{ SET.notify=e.target.checked; saveSet(); };
     $('#setSound').onchange=e=>{ SET.sound=e.target.checked; saveSet(); };
     $('#setPresent').onclick=()=>togglePresentation();
-    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.4',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
+    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.5',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
     $('#setRestore').onclick=()=>$('#setFile').click();
     $('#setFile').onchange=ev=>{
       const f=ev.target.files[0]; if(!f) return;
@@ -5676,7 +5683,7 @@ window.addEventListener('unhandledrejection',e=>{ console.error('SIS promise:',e
 /* ---- BOOT ---- */
 function boot(){
   if(window.__booted) return; window.__booted=true;
-  // Tautan gabung (#sisjoin=…) — terapkan kredensial dari tautan antar perangkat (v2.2.4)
+  // Tautan gabung (#sisjoin=…) — terapkan kredensial dari tautan antar perangkat (v2.2.5)
   try{
     const jm=(location.hash||'').match(/sisjoin=([^&]+)/);
     if(jm){
@@ -5723,8 +5730,8 @@ function boot(){
       .catch(err=>toast('Supabase gagal',(err.message||String(err))+' — berjalan lokal.','warn'));
   }
   // sambutan
-  setTimeout(()=>toast('SIS v2.2.4 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
-  logAct('system','SIS diinisialisasi (boot v2.2.4)');
+  setTimeout(()=>toast('SIS v2.2.5 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
+  logAct('system','SIS diinisialisasi (boot v2.2.5)');
 }
 document.addEventListener('DOMContentLoaded',boot);
 if(document.readyState!=='loading'&&!window.__booted){ window.__booted=true; boot(); }
