@@ -483,7 +483,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <nav id="nav"></nav>
     <div class="side-foot">
       <div class="dotrow"><span class="dot d-ok"></span><span id="sideSys">SYSTEM NOMINAL</span></div>
-      <div class="mini">v2.2.3 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
+      <div class="mini">v2.2.4 · BUILD 2026.11<br>Simulated Intelligence Grid</div>
     </div>
   </aside>
 
@@ -515,7 +515,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
     <main id="view"></main>
 
     <div class="footer-bar">
-      <span><b style="color:var(--neon)">SIS v2.2.3</b></span><span class="sep"></span>
+      <span><b style="color:var(--neon)">SIS v2.2.4</b></span><span class="sep"></span>
       <span id="footSources">Data sources: —</span><span class="sep"></span>
       <span id="footUpd">Last sync: —</span><span class="sep"></span>
       <div class="ticker"><span id="footTicker">MENYIAPKAN SISTEM…</span></div>
@@ -532,7 +532,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.78rem;min-width:640px}
 <script>
 'use strict';
 /* ================================================================
-   SPACE INTELLIGENCE SYSTEM (SIS) v2.2.3 — Single-file application
+   SPACE INTELLIGENCE SYSTEM (SIS) v2.2.4 — Single-file application
    All modules, demo data, 3D, charts, storage & optional Supabase sync.
    ================================================================ */
 
@@ -856,7 +856,7 @@ async function supaConnect(){
   SUPA.status='connected'; SUPA.lastError='';
   markSource('supabase','Supabase Cloud Sync','LIVE',cfg.url);
   logAct('supabase','Terhubung ke Supabase: '+cfg.url);
-  // sinkronisasi pengaturan antar perangkat (v2.2.3): tarik snapshot koneksi/kunci, lalu kirim versi lokal
+  // sinkronisasi pengaturan antar perangkat (v2.2.4): tarik snapshot koneksi/kunci, lalu kirim versi lokal
   try{
     const got=await supaSettingsPull();
     if(got) logAct('supabase','Pengaturan koneksi/kunci NASA ditarik dari cloud (antar perangkat).');
@@ -896,13 +896,13 @@ async function supaPull(){
   return n;
 }
 
-/* ---------------- Sinkronisasi pengaturan antar perangkat (v2.2.3) ----------------
+/* ---------------- Sinkronisasi pengaturan antar perangkat (v2.2.4) ----------------
    Kredensial (URL + anon key + opsi kunci NASA) hidup di localStorage = per-device.
    Snapshot disimpan ke tabel api_cache (source='sis_settings') di project Supabase,
    sehingga perangkat lain yang Connect ke project yang SAMA otomatis menariknya. */
 function supaSettingsPayload(includeKey){
   return {supaCfg:{url:COLL.supaCfg.url,key:COLL.supaCfg.key,table:COLL.supaCfg.table,auto:COLL.supaCfg.auto,proxy:COLL.supaCfg.proxy,syncKey:!!includeKey},
-    nasaKey:includeKey?(SET.nasaKey||''):'', ver:'v2.2.3', ts:new Date().toISOString()};
+    nasaKey:includeKey?(SET.nasaKey||''):'', ver:'v2.2.4', ts:new Date().toISOString()};
 }
 async function supaSettingsPush(includeKey){
   if(!SUPA.client||!COLL.supaCfg.url) return false;
@@ -1096,11 +1096,25 @@ function parseHorizonsVectors(json){
     const res=String((json&&json.result)||'');
     const i=res.indexOf('$$SOE'), j=res.indexOf('$$EOE');
     if(i<0||j<0||j<=i) return null;
-    const line=res.slice(i+5,j).trim().split('\n')[0];
-    const nums=line.replace(/,/g,' ').trim().split(/\s+/).filter(s=>/^[+-]?(\d+\.?\d*|\.\d+)([Ee][+-]?\d+)?$/.test(s));
-    if(nums.length<10) return null;
-    const v=nums.slice(-9).map(Number);
-    return {jd:Number(nums[nums.length-10]),x:v[0],y:v[1],z:v[2],vx:v[3],vy:v[4],vz:v[5]};
+    const block=res.slice(i+5,j);
+    // Format teks Horizons VECTORS per langkah waktu: baris timestamp (JD),
+    // lalu "X = … Y = … Z = …" dan "VX=… VY=… VZ=…" — bisa terpisah 3 baris
+    // atau digabung 1 baris. Parser lama hanya membaca baris pertama (JD) yang
+    // tak pernah berisi 10 angka vektor → selalu null → Horizons tak pernah LIVE.
+    // v2.2.4: pindai seluruh blok dengan regex per komponen.
+    const N='([+-]?[0-9]+(?:\\.[0-9]+)?(?:[Ee][+-]?[0-9]+)?)';
+    let jd=null,x=null,y=null,z=null,vx=null,vy=null,vz=null;
+    const lines=block.split('\n');
+    for(let k=0;k<lines.length;k++){
+      const L=lines[k];
+      if(jd===null){ const m=L.match(new RegExp('^\\s*'+N+'\\s*=')); if(m) jd=Number(m[1]); }
+      if(x===null){ const m=L.match(new RegExp('X\\s*=\\s*'+N+'\\s+Y\\s*=\\s*'+N+'\\s+Z\\s*=\\s*'+N,'i'));
+        if(m){ x=Number(m[1]); y=Number(m[2]); z=Number(m[3]); } }
+      if(vx===null){ const m=L.match(new RegExp('VX\\s*=\\s*'+N+'\\s+VY\\s*=\\s*'+N+'\\s+VZ\\s*=\\s*'+N,'i'));
+        if(m){ vx=Number(m[1]); vy=Number(m[2]); vz=Number(m[3]); } }
+    }
+    if(x===null||jd===null||!isFinite(x+y+z)||!isFinite(jd)) return null;
+    return {jd:jd,x:x,y:y,z:z,vx:vx||0,vy:vy||0,vz:vz||0};
   }catch(e){ return null; }
 }
 /* supaProxyURL: route via Edge Function nasa-proxy bila user mengaktifkannya */
@@ -1120,6 +1134,7 @@ async function fetchHorizons(force){
     }
     const v=r.ok?parseHorizonsVectors(r.data):null;
     if(v){ HORIZ.vec[pid]=v; ok++; }
+    else HORIZ.lastErr=r.ok?('balasan "'+pid+'" tak terparse ('+String(r.data).length+' byte)'):(r.err||'fetch gagal (HTTP/jaringan)');
   }));
   HORIZ.n=ok;
   markSource('horizons','JPL Horizons — vektor heliosentris',ok>=6?'LIVE':ok>0?'CACHED':'UNAVAILABLE','https://ssd-api.jpl.nasa.gov/horizons.api');
@@ -1185,6 +1200,7 @@ async function fetchProbes(force){
       if(pu) r=await fetchJSON(pu,{cacheKey:'prbp_'+(-p.naif),timeout:15000});
     }
     const v=r.ok?parseHorizonsVectors(r.data):null;
+    if(!v) HORIZ.lastErr=r.ok?('balasan probe '+p.naif+' tak terparse ('+String(r.data).length+' byte)'):(r.err||'fetch gagal (HTTP/jaringan)');
     if(v&&ea){
       HORIZ.vec['p'+p.naif]=v;
       p.live={dAU:Math.sqrt((v.x-ea.x)**2+(v.y-ea.y)**2+(v.z-ea.z)**2),helioR:Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z)};
@@ -3511,7 +3527,7 @@ REG({
       if(b){ const live=HORIZ.probeN>0; b.className='badge '+(live?'b-live':'b-hist');
         b.textContent=live?('Posisi nyata '+HORIZ.probeN+'/'+PROBES.length+' probe'):'Fallback model (Horizons tak terjangkau)'; }
       const nt=$('#probeNote');
-      if(nt) nt.innerHTML=HORIZ.probeN>0?'Delay one-way = waktu tempuh sinyal radio Bumi→probe (c = 499,005 s/AU). Vektor posisi langsung dari <b>JPL Horizons</b>.':'JPL Horizons tidak terjangkau langsung (offline/CORS). Jarak fallback = model estimasi berlabel SIMULATED. Langkah LIVE: ① deploy <b>nasa-proxy</b> (PANDUAN §5) ② switch <b>Proxy API</b> di Data Management (memicu rute ulang otomatis) ③ bila tetap gagal, redeploy function dari folder yang memuat <b>config.toml</b> (verify_jwt=false) — v2.2.3 kirim apikey otomatis sehingga 401 teratasi.';
+      if(nt) nt.innerHTML=HORIZ.probeN>0?'Delay one-way = waktu tempuh sinyal radio Bumi→probe (c = 499,005 s/AU). Vektor posisi langsung dari <b>JPL Horizons</b>.':'JPL Horizons tidak terjangkau langsung (offline/CORS). Jarak fallback = model estimasi berlabel SIMULATED. Langkah LIVE: ① deploy <b>nasa-proxy</b> (PANDUAN §5) ② switch <b>Proxy API</b> di Data Management + tombol <b>Test proxy</b> untuk cek jalur end-to-end ③ bila tetap gagal, redeploy function dari folder yang memuat <b>config.toml</b> (verify_jwt=false) — v2.2.4 kirim apikey otomatis. Percobaan terakhir: <b>'+(HORIZ.lastErr?esc(HORIZ.lastErr):'tidak tercatat')+'</b>.';
     };
     renderProbeRows();
     fetchProbes().then(renderProbeRows).catch(()=>{});
@@ -5071,7 +5087,7 @@ REG({
             <div class="set-row mt"><div class="info"><b>Auto-sync saat data berubah</b><span>Push otomatis setelah CRUD (perlu terhubung)</span></div>
               <label class="switch"><input type="checkbox" id="suAuto" ${COLL.supaCfg.auto?'checked':''}><i></i></label></div>
             <div class="set-row"><div class="info"><b>Proxy API via Edge Function</b><span>Route Horizons/ExoArchive/NeoWs lewat supabase/functions/nasa-proxy (deploy dulu — PANDUAN §5). Diperlukan untuk ExoArchive (IPAC tanpa header CORS).</span></div>
-              <label class="switch"><input type="checkbox" id="suProxy" ${COLL.supaCfg.proxy?'checked':''}><i></i></label></div>
+              <label class="switch"><input type="checkbox" id="suProxy" ${COLL.supaCfg.proxy?'checked':''}><i></i></label><button class="btn sm" id="suProxyTest">Test proxy</button></div>
             <div class="set-row"><div class="info"><b>Sertakan kunci NASA saat sinkron</b><span>Snapshot koneksi disimpan di tabel api_cache project Anda — perangkat lain yang Connect ke project yang sama otomatis menariknya. Catatan: siapa pun yang memegang URL + anon key dapat membaca isinya; pakai kunci berkuota terbatas bila disebar.</span></div>
               <label class="switch"><input type="checkbox" id="suSyncKey" ${COLL.supaCfg.syncKey?'checked':''}><i></i></label></div>
             <div class="note blue">Pindah perangkat: isi URL + anon key sekali lalu Connect (pengaturan & kunci NASA ditarik otomatis dari cloud), atau buka <b>Tautan gabung</b> di device baru — kredensial diterapkan otomatis.</div>
@@ -5187,7 +5203,7 @@ REG({
       rd.readAsText(file);
     };
     $('#dmBackup').onclick=()=>{
-      const snap={version:'SIS v2.2.3',t:Date.now(),data:{}};
+      const snap={version:'SIS v2.2.4',t:Date.now(),data:{}};
       Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]);
       snap.data.settings=SET;
       download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json');
@@ -5248,6 +5264,16 @@ REG({
     $('#suProxy').onchange=e=>{ COLL.supaCfg.proxy=e.target.checked; persist('supaCfg');
       if(e.target.checked){ toast('Proxy Edge','Rute ulang Horizons/ExoArchive/TLE via nasa-proxy…','info'); if(typeof loadLiveData==='function') loadLiveData(true); }
       else toast('Proxy Edge','Proxy dimatikan — kembali ke rute langsung.','info'); };
+    $('#suProxyTest').onclick=async()=>{
+      const st=$('#suStatus'); st.style.display='block';
+      if(!COLL.supaCfg.url){ st.className='note'; st.innerHTML='Isi <b>URL project Supabase</b> lalu Connect dulu.'; return; }
+      if(!COLL.supaCfg.proxy){ st.className='note'; st.innerHTML='Nyalakan switch <b>Proxy API</b> dulu.'; return; }
+      st.className='note blue'; st.innerHTML='Menguji nasa-proxy → Exoplanet Archive (TAP — host tanpa CORS, hanya bisa lewat proxy)…';
+      const px=supaProxyURL('https://exoplanetarchive.ipac.caltech.edu/TAP/sync?format=json&query='+encodeURIComponent('select top 3 pl_name from ps where default_flag=1'));
+      const r=await fetchJSON(px,{cacheKey:'proxytest',timeout:15000});
+      if(r.ok&&Array.isArray(r.data)&&r.data.length){ st.className='note ok'; st.innerHTML='<b>PROXY OK — LIVE:</b> TAP menjawab '+r.data.length+' baris. Jalur Horizons/ExoArchive/CelesTrak siap; tekan <b>Refresh</b> di Command Center bila panel masih SIMULATED.'; }
+      else{ st.className='note'; st.innerHTML='<b>PROXY GAGAL:</b> '+(r.err||'balasan tidak valid')+'. Penyebab umum: function belum ter-deploy, <b>verify_jwt</b> masih true (redeploy dari folder yang memuat supabase/config.toml), atau URL project salah.'; }
+    };
     $('#suSyncKey').onchange=e=>{ COLL.supaCfg.syncKey=e.target.checked; persist('supaCfg'); if(SUPA.client) supaSettingsPush(COLL.supaCfg.syncKey&&!!SET.nasaKey).then(ok=>{ if(ok) toast('Sinkron pengaturan','Snapshot di cloud diperbarui.','ok'); }); };
     $('#suJoin').onclick=()=>{
       if(!COLL.supaCfg.url||!COLL.supaCfg.key){
@@ -5328,7 +5354,7 @@ REG({
     </div>
     <div class="panel pad"><h3 style="font-family:var(--fontHead);font-size:.76rem;letter-spacing:.12em;color:#7dd3fc;margin-bottom:8px">INFORMASI VERSI</h3>
       <div class="tiles">
-        <div class="tile"><small>Versi</small><b>SIS v2.2.3 (build 2026.11)</b></div>
+        <div class="tile"><small>Versi</small><b>SIS v2.2.4 (build 2026.11)</b></div>
         <div class="tile"><small>Tagline</small><b>Beyond Earth, Beyond Intelligence</b></div>
         <div class="tile"><small>Arsitektur</small><b>Single-file HTML + LocalStorage + Supabase opsional</b></div>
         <div class="tile"><small>Library</small><b>Three.js r128 · Chart.js 4 · Lucide · satellite.js (opsional)</b></div>
@@ -5351,7 +5377,7 @@ REG({
     $('#setNotify').onchange=e=>{ SET.notify=e.target.checked; saveSet(); };
     $('#setSound').onchange=e=>{ SET.sound=e.target.checked; saveSet(); };
     $('#setPresent').onclick=()=>togglePresentation();
-    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.3',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
+    $('#setBackup').onclick=()=>{ const snap={version:'SIS v2.2.4',t:Date.now(),data:{}}; Object.keys(COLL).forEach(k=>snap.data[k]=COLL[k]); snap.data.settings=SET; download('sis_backup_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(snap,null,2),'application/json'); };
     $('#setRestore').onclick=()=>$('#setFile').click();
     $('#setFile').onchange=ev=>{
       const f=ev.target.files[0]; if(!f) return;
@@ -5650,7 +5676,7 @@ window.addEventListener('unhandledrejection',e=>{ console.error('SIS promise:',e
 /* ---- BOOT ---- */
 function boot(){
   if(window.__booted) return; window.__booted=true;
-  // Tautan gabung (#sisjoin=…) — terapkan kredensial dari tautan antar perangkat (v2.2.3)
+  // Tautan gabung (#sisjoin=…) — terapkan kredensial dari tautan antar perangkat (v2.2.4)
   try{
     const jm=(location.hash||'').match(/sisjoin=([^&]+)/);
     if(jm){
@@ -5697,8 +5723,8 @@ function boot(){
       .catch(err=>toast('Supabase gagal',(err.message||String(err))+' — berjalan lokal.','warn'));
   }
   // sambutan
-  setTimeout(()=>toast('SIS v2.2.3 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
-  logAct('system','SIS diinisialisasi (boot v2.2.3)');
+  setTimeout(()=>toast('SIS v2.2.4 siap','Mode demo aktif — tekan Ctrl+K untuk command palette, Ctrl+/ untuk shortcut.','info'),900);
+  logAct('system','SIS diinisialisasi (boot v2.2.4)');
 }
 document.addEventListener('DOMContentLoaded',boot);
 if(document.readyState!=='loading'&&!window.__booted){ window.__booted=true; boot(); }
